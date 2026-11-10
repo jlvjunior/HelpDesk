@@ -1,0 +1,12 @@
+loki:
+  enabled: true
+  image:
+    tag: 2.9.10
+  isDefault: false
+
+promtail:
+  enabled: true
+
+# O Grafana vem do kube-prometheus-stack.
+grafana:
+  enabled: false

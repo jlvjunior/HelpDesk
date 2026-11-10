@@ -1,0 +1,40 @@
+groups:
+  - name: helpdesk
+    rules:
+      - alert: ServicoFora
+        expr: up{job=~"ticket-service|notification-service"} == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "Réplica de {{ $labels.job }} fora do ar ({{ $labels.instance }})"
+
+      - alert: TaxaDeErroAlta
+        expr: |
+          sum by (service) (rate(http_request_duration_seconds_count{status=~"5.."}[5m]))
+            / sum by (service) (rate(http_request_duration_seconds_count[5m])) > 0.05
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Mais de 5% de erros 5xx em {{ $labels.service }}"
+
+      - alert: LatenciaP95Alta
+        expr: |
+          histogram_quantile(0.95, sum by (le, service) (rate(http_request_duration_seconds_bucket[5m]))) > 0.5
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "p95 acima de 500 ms em {{ $labels.service }}"
+
+      - alert: FilaDeNotificacoesAcumulando
+        expr: rabbitmq_queue_messages_ready{queue="notifications"} > 100
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Mais de 100 mensagens paradas na fila de notificações"
+
+      - alert: MensagensNaDLQ
+        expr: rabbitmq_queue_messages{queue="notifications.dlq"} > 0
+        for: 1m
+        labels: { severity: warning }
+        annotations:
+          summary: "Há mensagens na dead-letter queue de notificações"

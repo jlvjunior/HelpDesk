@@ -1,0 +1,28 @@
+# Integração com o Prometheus Operator (kube-prometheus-stack instalado pelo Terraform).
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: helpdesk-services
+  namespace: helpdesk
+spec:
+  selector:
+    matchExpressions:
+      - { key: app, operator: In, values: [ticket-service, notification-service] }
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 10s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: rabbitmq
+  namespace: helpdesk
+spec:
+  selector:
+    matchLabels:
+      app: rabbitmq
+  endpoints:
+    - port: metrics
+      path: /metrics/per-object
+      interval: 15s

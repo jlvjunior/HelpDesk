@@ -1,0 +1,140 @@
+# HelpDesk Cloud — Joaquim Luiz Vitória Junior
+# Arquitetura de Computação em Nuvem · Prof. Erik Rosa Filippini
+#
+# Ambiente local completo: aplicação (3 camadas) + mensageria + observabilidade.
+#   docker compose up -d --build
+# Frontend: http://localhost:8080 | Grafana: http://localhost:3000 (admin/admin)
+# Prometheus: http://localhost:9090 | RabbitMQ: http://localhost:15672 (helpdesk/helpdesk)
+
+name: helpdesk
+
+x-service-env: &service-env
+  DATABASE_URL: postgres://helpdesk:helpdesk@postgres:5432/helpdesk
+  AMQP_URL: amqp://helpdesk:helpdesk@rabbitmq:5672
+  LOG_LEVEL: info
+
+x-healthcheck: &node-healthcheck
+  test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/readyz"]
+  interval: 10s
+  timeout: 3s
+  retries: 5
+  start_period: 10s
+
+services:
+  # ---------- Camada de dados ----------
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: helpdesk
+      POSTGRES_PASSWORD: helpdesk
+      POSTGRES_DB: helpdesk
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U helpdesk -d helpdesk"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  # ---------- Mensageria ----------
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: helpdesk
+      RABBITMQ_DEFAULT_PASS: helpdesk
+    ports:
+      - "15672:15672" # painel de administração
+    volumes:
+      - rabbitdata:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # ---------- Backend (microsserviços) ----------
+  ticket-service:
+    build: ./app/ticket-service
+    environment: *service-env
+    depends_on:
+      postgres: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+    healthcheck: *node-healthcheck
+    deploy:
+      replicas: 2 # duas réplicas atrás do DNS do Docker (alta disponibilidade local)
+    restart: unless-stopped
+
+  notification-service:
+    build: ./app/notification-service
+    environment: *service-env
+    depends_on:
+      postgres: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+    healthcheck: *node-healthcheck
+    deploy:
+      replicas: 2 # consumidores concorrentes na mesma fila
+    restart: unless-stopped
+
+  # ---------- Frontend + gateway ----------
+  frontend:
+    build: ./app/frontend
+    ports:
+      - "8080:8080"
+    depends_on:
+      - ticket-service
+      - notification-service
+    restart: unless-stopped
+
+  # ---------- Observabilidade ----------
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    volumes:
+      - ./infra/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/observability/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - promdata:/prometheus
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+
+  loki:
+    image: grafana/loki:3.3.2
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - lokidata:/loki
+    restart: unless-stopped
+
+  promtail:
+    image: grafana/promtail:3.3.2
+    command: -config.file=/etc/promtail/config.yml
+    volumes:
+      - ./infra/observability/promtail.yml:/etc/promtail/config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - loki
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/helpdesk.json
+    volumes:
+      - ./infra/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafanadata:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+      - loki
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  rabbitdata:
+  promdata:
+  lokidata:
+  grafanadata:

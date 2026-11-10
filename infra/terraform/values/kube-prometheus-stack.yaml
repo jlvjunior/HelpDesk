@@ -1,0 +1,35 @@
+prometheus:
+  service:
+    type: NodePort
+    nodePort: 30090
+  prometheusSpec:
+    # Descobre ServiceMonitors e PrometheusRules de qualquer namespace (ex.: helpdesk).
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    retention: 2d
+
+grafana:
+  service:
+    type: NodePort
+    nodePort: 30030
+  sidecar:
+    dashboards:
+      enabled: true
+      searchNamespace: ALL
+  additionalDataSources:
+    - name: Loki
+      uid: loki
+      type: loki
+      access: proxy
+      url: http://loki:3100
+
+# Componentes do control-plane não expõem métricas no kind: evita alvos "down".
+kubeEtcd:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeProxy:
+  enabled: false

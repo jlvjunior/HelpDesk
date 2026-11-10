@@ -1,0 +1,104 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ticket-service
+  namespace: helpdesk
+  labels:
+    app: ticket-service
+spec:
+  selector:
+    app: ticket-service
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ticket-service
+  namespace: helpdesk
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0 # deploy sem indisponibilidade
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: ticket-service
+  template:
+    metadata:
+      labels:
+        app: ticket-service
+    spec:
+      # Espalha as réplicas entre os nós: a queda de um nó não derruba o serviço.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: ticket-service
+      terminationGracePeriodSeconds: 20
+      containers:
+        - name: ticket-service
+          image: helpdesk/ticket-service:1.0.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            - name: DATABASE_URL
+              valueFrom: { secretKeyRef: { name: helpdesk-secrets, key: DATABASE_URL } }
+            - name: AMQP_URL
+              valueFrom: { secretKeyRef: { name: helpdesk-secrets, key: AMQP_URL } }
+          startupProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 3
+            failureThreshold: 40
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 100m, memory: 96Mi }
+            limits: { memory: 256Mi }
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: ticket-service
+  namespace: helpdesk
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: ticket-service
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: ticket-service
+  namespace: helpdesk
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: ticket-service
