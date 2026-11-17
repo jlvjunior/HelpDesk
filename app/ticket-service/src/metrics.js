@@ -26,6 +26,27 @@ const ticketsStatusChanged = new client.Counter({
   registers: [register],
 });
 
+const ticketMessages = new client.Counter({
+  name: 'ticket_messages_total',
+  help: 'Mensagens trocadas na conversa dos chamados, por papel do autor',
+  labelNames: ['role'],
+  registers: [register],
+});
+
+const reopenRequests = new client.Counter({
+  name: 'ticket_reopen_requests_total',
+  help: 'Pedidos de reabertura, por resultado (solicitado, recusado)',
+  labelNames: ['result'],
+  registers: [register],
+});
+
+const logins = new client.Counter({
+  name: 'auth_logins_total',
+  help: 'Tentativas de login, por resultado (ok, recusado)',
+  labelNames: ['result'],
+  registers: [register],
+});
+
 const eventsPublished = new client.Counter({
   name: 'events_published_total',
   help: 'Eventos publicados na mensageria',
@@ -44,4 +65,4 @@ function httpMetrics(req, res, next) {
   next();
 }
 
-module.exports = { register, httpMetrics, ticketsCreated, ticketsStatusChanged, eventsPublished };
+module.exports = { register, httpMetrics, ticketsCreated, ticketsStatusChanged, ticketMessages, reopenRequests, logins, eventsPublished };

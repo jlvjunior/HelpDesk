@@ -6,7 +6,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
-      '/api/tickets': { target: 'http://localhost:3001', rewrite: (p) => p.replace(/^\/api/, '') },
+      '^/api/(tickets|auth|users)': { target: 'http://localhost:3001', rewrite: (p) => p.replace(/^\/api/, '') },
       '/api/notifications': { target: 'http://localhost:3002', rewrite: (p) => p.replace(/^\/api/, '') },
     },
   },

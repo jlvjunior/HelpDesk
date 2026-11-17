@@ -54,6 +54,8 @@ spec:
               valueFrom: { secretKeyRef: { name: helpdesk-secrets, key: DATABASE_URL } }
             - name: AMQP_URL
               valueFrom: { secretKeyRef: { name: helpdesk-secrets, key: AMQP_URL } }
+            - name: JWT_SECRET
+              valueFrom: { secretKeyRef: { name: helpdesk-secrets, key: JWT_SECRET } }
           startupProbe:
             httpGet: { path: /healthz, port: http }
             periodSeconds: 3

@@ -42,10 +42,16 @@ function createRepository(pool) {
       );
       return rowCount === 1;
     },
-    async list({ ticketId } = {}) {
-      const { rows } = ticketId
-        ? await pool.query('SELECT * FROM notifications WHERE ticket_id = $1 ORDER BY created_at DESC LIMIT 100', [ticketId])
-        : await pool.query('SELECT * FROM notifications ORDER BY created_at DESC LIMIT 100');
+    // recipient: quando informado, restringe às notificações daquele e-mail (perfil usuario).
+    async list({ ticketId, recipient } = {}) {
+      const where = [];
+      const params = [];
+      if (ticketId) where.push(`ticket_id = $${params.push(ticketId)}`);
+      if (recipient) where.push(`recipient = $${params.push(recipient)}`);
+      const { rows } = await pool.query(
+        `SELECT * FROM notifications ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY created_at DESC LIMIT 100`,
+        params
+      );
       return rows;
     },
   };

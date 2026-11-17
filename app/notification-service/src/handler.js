@@ -19,14 +19,34 @@ function buildNotification(event) {
       return {
         ...base,
         subject: `Chamado atualizado: ${t.title}`,
-        body: `O chamado "${t.title}" agora está com status "${STATUS_LABEL[t.status] || t.status}".`,
+        body:
+          `O chamado "${t.title}" agora está com status "${STATUS_LABEL[t.status] || t.status}".` +
+          (['resolvido', 'fechado'].includes(t.status) && t.close_reason ? ` Justificativa: ${t.close_reason}` : ''),
+      };
+    case 'ticket.reopen_requested':
+      return {
+        ...base,
+        subject: `Pedido de reabertura recebido: ${t.title}`,
+        body: `Recebemos o seu pedido para reabrir o chamado "${t.title}". Justificativa informada: ${t.reopen_reason}`,
+      };
+    case 'ticket.reopen_dismissed':
+      return {
+        ...base,
+        subject: `Pedido de reabertura não aceito: ${t.title}`,
+        body: `O pedido para reabrir o chamado "${t.title}" não foi aceito pelo atendimento. Use a conversa do chamado em caso de dúvida.`,
+      };
+    case 'ticket.message_added':
+      return {
+        ...base,
+        subject: `Nova resposta no chamado: ${t.title}`,
+        body: `${t.message.author_name} respondeu ao chamado "${t.title}": ${t.message.body}`,
       };
     default:
       return null;
   }
 }
 
-// Resultado: 'ok' | 'duplicado' | 'descartado'. Lança erro em falha transitória (mensagem volta para a fila).
+// Resultado: 'ok' | 'duplicado' | 'descartado' | 'ignorado'. Lança erro em falha transitória (mensagem volta para a fila).
 function createHandler({ repo }) {
   return async function handle(rawContent) {
     const end = metrics.processingDuration.startTimer();
@@ -37,6 +57,13 @@ function createHandler({ repo }) {
       metrics.eventsConsumed.inc({ type: 'desconhecido', result: 'descartado' });
       logger.warn('mensagem com JSON inválido descartada');
       return 'descartado';
+    }
+
+    // Mensagem escrita pelo próprio solicitante não gera aviso para ele mesmo.
+    if (event.type === 'ticket.message_added' && (!event.data || !event.data.message || event.data.message.author_role !== 'atendente')) {
+      metrics.eventsConsumed.inc({ type: event.type, result: 'ignorado' });
+      end();
+      return 'ignorado';
     }
 
     const n = buildNotification(event);

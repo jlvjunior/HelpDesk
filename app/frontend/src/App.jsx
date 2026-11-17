@@ -1,144 +1,111 @@
 import { useCallback, useEffect, useState } from 'react';
-import { createTicket, listNotifications, listTickets, updateStatus } from './api.js';
-
-const STATUS = { aberto: 'Aberto', em_andamento: 'Em andamento', resolvido: 'Resolvido', fechado: 'Fechado' };
-const PRIORITY = { baixa: 'Baixa', media: 'Média', alta: 'Alta' };
-const EMPTY = { title: '', description: '', requester: '', priority: 'media' };
-
-const fmt = (iso) => new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'medium' });
+import * as api from './api.js';
+import { PROFILE, hasUnread, isStaff, loadSeen, saveSeen } from './common.js';
+import Login from './components/Login.jsx';
+import Tickets from './components/Tickets.jsx';
+import NewTicket from './components/NewTicket.jsx';
+import Notifications from './components/Notifications.jsx';
+import Conversations from './components/Conversations.jsx';
+import Users from './components/Users.jsx';
+import Footer from './components/Footer.jsx';
 
 export default function App() {
+  const [session, setSession] = useState(() => api.loadSession());
+  const [view, setView] = useState('tickets');
   const [tickets, setTickets] = useState([]);
   const [notifications, setNotifications] = useState([]);
-  const [form, setForm] = useState(EMPTY);
-  const [error, setError] = useState('');
-  const [sending, setSending] = useState(false);
   const [online, setOnline] = useState(true);
+  const [chatId, setChatId] = useState(null);
+  const [seen, setSeen] = useState({});
+
+  const user = session?.user;
+  const staff = user ? isStaff(user) : false;
+
+  const logout = useCallback(() => {
+    api.saveSession(null);
+    setSession(null);
+    setTickets([]);
+    setNotifications([]);
+    setChatId(null);
+    setView('tickets');
+  }, []);
+
+  useEffect(() => { api.setUnauthorizedHandler(logout); }, [logout]);
+  useEffect(() => { setSeen(user ? loadSeen(user) : {}); }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const refresh = useCallback(async () => {
-    const [t, n] = await Promise.allSettled([listTickets(), listNotifications()]);
+    const [t, n] = await Promise.allSettled([api.listTickets(), api.listNotifications()]);
     if (t.status === 'fulfilled') setTickets(t.value);
     if (n.status === 'fulfilled') setNotifications(n.value);
     setOnline(t.status === 'fulfilled');
   }, []);
 
-  // Polling simples: mostra as notificações chegando de forma assíncrona.
+  // Atualização automática: chamados, notificações e o aviso de mensagens novas.
   useEffect(() => {
+    if (!session) return undefined;
     refresh();
     const timer = setInterval(refresh, 3000);
     return () => clearInterval(timer);
-  }, [refresh]);
+  }, [session, refresh]);
 
-  async function submit(e) {
-    e.preventDefault();
-    setError('');
-    setSending(true);
-    try {
-      await createTicket(form);
-      setForm(EMPTY);
-      await refresh();
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setSending(false);
-    }
+  // Marca a conversa como vista até a mensagem indicada.
+  const markSeen = useCallback((ticketId, at) => {
+    setSeen((prev) => {
+      if (prev[ticketId] && prev[ticketId] >= at) return prev;
+      const next = { ...prev, [ticketId]: at };
+      if (user) saveSeen(user, next);
+      return next;
+    });
+  }, [user]);
+
+  if (!session) {
+    return <Login onLogin={(s) => { api.saveSession(s); setSession(s); }} />;
   }
 
-  async function changeStatus(id, status) {
-    setError('');
-    try {
-      await updateStatus(id, status);
-      await refresh();
-    } catch (err) {
-      setError(err.message);
-    }
-  }
+  const unread = tickets.filter((t) => hasUnread(t, user, seen)).length;
+  const openChat = (id) => {
+    setChatId(id);
+    setView('chat');
+  };
 
-  const set = (field) => (e) => setForm({ ...form, [field]: e.target.value });
+  const tabs = [
+    ['tickets', staff ? 'Atendimento' : 'Meus chamados'],
+    ...(staff ? [] : [['new', 'Novo chamado']]),
+    ['notifications', `Notificações (${notifications.length})`],
+    ...(user.role === 'admin' ? [['users', 'Usuários']] : []),
+  ];
 
   return (
     <div className="page">
-      <header>
+      <header className="topbar">
         <h1>HelpDesk Cloud</h1>
-        <span className={online ? 'pill ok' : 'pill down'}>{online ? 'API online' : 'API indisponível'}</span>
+        <button type="button" className={`chat-button ${view === 'chat' ? 'active' : ''} ${unread ? 'has-unread' : ''}`} onClick={() => setView('chat')} aria-label={unread ? `Conversas: ${unread} com mensagens novas` : 'Conversas: nenhuma mensagem nova'}>
+          Conversas
+          <span className={`badge ${unread ? '' : 'none'}`}>{unread ? `${unread} ${unread === 1 ? 'nova' : 'novas'}` : 'sem novas'}</span>
+        </button>
+        <div className="session">
+          <span className={online ? 'pill ok' : 'pill down'}>{online ? 'API online' : 'API indisponível'}</span>
+          <span>{user.name}</span>
+          <span className={`pill role ${user.role}`}>{PROFILE[user.role]}</span>
+          <button type="button" className="secondary" onClick={logout}>Sair</button>
+        </div>
       </header>
 
-      {error && <div className="error" role="alert">{error}</div>}
+      <nav className="tabs" aria-label="Seções">
+        {tabs.map(([id, label]) => (
+          <button key={id} type="button" className={view === id ? 'active' : ''} aria-current={view === id ? 'page' : undefined} onClick={() => setView(id)}>{label}</button>
+        ))}
+      </nav>
 
       <main>
-        <section className="card">
-          <h2>Abrir chamado</h2>
-          <form onSubmit={submit}>
-            <label>
-              Título
-              <input value={form.title} onChange={set('title')} required minLength={3} maxLength={200} placeholder="Ex.: Impressora do 2º andar não imprime" />
-            </label>
-            <label>
-              Descrição
-              <textarea value={form.description} onChange={set('description')} required rows={4} maxLength={5000} />
-            </label>
-            <div className="row">
-              <label>
-                Seu e-mail
-                <input type="email" value={form.requester} onChange={set('requester')} required placeholder="voce@empresa.com" />
-              </label>
-              <label>
-                Prioridade
-                <select value={form.priority} onChange={set('priority')}>
-                  {Object.entries(PRIORITY).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-                </select>
-              </label>
-            </div>
-            <button type="submit" disabled={sending}>{sending ? 'Enviando…' : 'Abrir chamado'}</button>
-          </form>
-        </section>
-
-        <section className="card">
-          <h2>Notificações enviadas <small>({notifications.length})</small></h2>
-          {notifications.length === 0 && <p className="muted">Nenhuma notificação ainda. Abra um chamado para ver o fluxo assíncrono.</p>}
-          <ul className="notifications">
-            {notifications.slice(0, 8).map((n) => (
-              <li key={n.id}>
-                <strong>{n.subject}</strong>
-                <span>{n.body}</span>
-                <small>Para {n.recipient} · {fmt(n.created_at)}</small>
-              </li>
-            ))}
-          </ul>
-        </section>
-
-        <section className="card wide">
-          <h2>Chamados <small>({tickets.length})</small></h2>
-          {tickets.length === 0 ? (
-            <p className="muted">Nenhum chamado aberto.</p>
-          ) : (
-            <table>
-              <thead>
-                <tr><th>Título</th><th>Solicitante</th><th>Prioridade</th><th>Aberto em</th><th>Status</th></tr>
-              </thead>
-              <tbody>
-                {tickets.map((t) => (
-                  <tr key={t.id}>
-                    <td><strong>{t.title}</strong><div className="muted">{t.description}</div></td>
-                    <td>{t.requester}</td>
-                    <td><span className={`tag ${t.priority}`}>{PRIORITY[t.priority]}</span></td>
-                    <td>{fmt(t.created_at)}</td>
-                    <td>
-                      <select value={t.status} onChange={(e) => changeStatus(t.id, e.target.value)} aria-label={`Status do chamado ${t.title}`}>
-                        {Object.entries(STATUS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-                      </select>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </section>
+        {view === 'tickets' && <Tickets tickets={tickets} user={user} staff={staff} seen={seen} onOpenChat={openChat} onChanged={refresh} />}
+        {view === 'new' && !staff && <NewTicket onCreated={async () => { await refresh(); setView('tickets'); }} />}
+        {view === 'notifications' && <Notifications notifications={notifications} staff={staff} />}
+        {view === 'chat' && <Conversations tickets={tickets} user={user} staff={staff} seen={seen} selectedId={chatId} onSelect={setChatId} onSeen={markSeen} />}
+        {view === 'users' && user.role === 'admin' && <Users me={user} />}
       </main>
 
-      <footer>
-        Desenvolvido por Joaquim Luiz Vitória Junior · Arquitetura de Computação em Nuvem · Prof. Erik Rosa Filippini
-      </footer>
+      <Footer />
     </div>
   );
 }

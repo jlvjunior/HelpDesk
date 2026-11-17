@@ -3,6 +3,7 @@ const pinoHttp = require('pino-http');
 const { randomUUID } = require('crypto');
 const logger = require('./logger');
 const metrics = require('./metrics');
+const { authenticate, isStaff } = require('./auth');
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -39,11 +40,13 @@ function createApp({ repo, consumer }) {
     res.end(await metrics.register.metrics());
   });
 
-  app.get('/notifications', async (req, res, next) => {
+  // O perfil "usuario" só enxerga as notificações enviadas para o próprio e-mail.
+  app.get('/notifications', authenticate, async (req, res, next) => {
     try {
       const { ticketId } = req.query;
       if (ticketId && !UUID_RE.test(ticketId)) return res.status(400).json({ error: 'ticketId inválido' });
-      res.json(await repo.list({ ticketId }));
+      const recipient = isStaff(req.user) ? undefined : req.user.email;
+      res.json(await repo.list({ ticketId, recipient }));
     } catch (err) {
       next(err);
     }

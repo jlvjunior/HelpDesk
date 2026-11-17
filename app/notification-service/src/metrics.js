@@ -14,7 +14,7 @@ const httpDuration = new client.Histogram({
 
 const eventsConsumed = new client.Counter({
   name: 'events_consumed_total',
-  help: 'Eventos consumidos da fila, por tipo e resultado (ok, duplicado, descartado, erro)',
+  help: 'Eventos consumidos da fila, por tipo e resultado (ok, duplicado, descartado, ignorado, erro)',
   labelNames: ['type', 'result'],
   registers: [register],
 });

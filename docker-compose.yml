@@ -3,7 +3,7 @@
 #
 # Ambiente local completo: aplicação (3 camadas) + mensageria + observabilidade.
 #   docker compose up -d --build
-# Frontend: http://localhost:8080 | Grafana: http://localhost:3000 (admin/admin)
+# Frontend: http://localhost:8080 (contas de demonstração no README) | Grafana: http://localhost:3000 (admin/admin)
 # Prometheus: http://localhost:9090 | RabbitMQ: http://localhost:15672 (helpdesk/helpdesk)
 
 name: helpdesk
@@ -12,6 +12,8 @@ x-service-env: &service-env
   DATABASE_URL: postgres://helpdesk:helpdesk@postgres:5432/helpdesk
   AMQP_URL: amqp://helpdesk:helpdesk@rabbitmq:5672
   LOG_LEVEL: info
+  # Segredo que assina os tokens de login. Valor de demonstração: defina JWT_SECRET no arquivo .env para trocar.
+  JWT_SECRET: ${JWT_SECRET:-troque-este-segredo-de-demonstracao}
 
 x-healthcheck: &node-healthcheck
   test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/readyz"]
@@ -126,7 +128,7 @@ services:
       - ./infra/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
       - grafanadata:/var/lib/grafana
     ports:
-      - "3000:3000"
+      - "${GRAFANA_PORT:-3000}:3000" # se a porta 3000 estiver ocupada, crie um .env com GRAFANA_PORT=3001
     depends_on:
       - prometheus
       - loki

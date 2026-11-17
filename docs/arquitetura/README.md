@@ -8,9 +8,11 @@
 
 **Requisitos funcionais**
 
-- Abrir chamado com título, descrição, e-mail do solicitante e prioridade (baixa, média, alta).
+- Entrar com e-mail e senha, com três perfis de acesso: usuário, operador e administrador.
+- Abrir chamado com título, descrição e prioridade (baixa, média, alta); o solicitante é a conta autenticada.
 - Listar chamados e alterar o status (aberto, em andamento, resolvido, fechado).
-- Notificar o solicitante quando o chamado é aberto e a cada mudança de status.
+- Trocar mensagens de texto dentro do chamado, entre solicitante e atendente (atendimento online).
+- Notificar o solicitante quando o chamado é aberto, a cada mudança de status e a cada resposta do atendente.
 - Consultar o histórico de notificações enviadas.
 
 **Requisitos não funcionais**
@@ -62,21 +64,78 @@ flowchart LR
 | Componente | Responsabilidade | Detalhes técnicos |
 |---|---|---|
 | **frontend** | Interface web e ponto único de entrada | SPA em React compilada com Vite. O nginx serve os arquivos estáticos e encaminha `/api/tickets` e `/api/notifications` para os microsserviços, gerando um `X-Request-Id` por requisição. |
-| **ticket-service** | CRUD de chamados e publicação de eventos | API REST em Express. Grava no PostgreSQL e publica `ticket.created` / `ticket.status_changed` no RabbitMQ com mensagens persistentes e *publisher confirms*. |
+| **ticket-service** | Contas e login, CRUD de chamados, conversa e publicação de eventos | API REST em Express. Grava no PostgreSQL e publica `ticket.created`, `ticket.status_changed`, `ticket.message_added`, `ticket.reopen_requested` e `ticket.reopen_dismissed` no RabbitMQ com mensagens persistentes e *publisher confirms*. |
 | **notification-service** | Consumo de eventos e registro das notificações | Consome a fila `notifications` com *ack* manual. O envio do e-mail é simulado (registrado em log e no banco). Expõe `GET /notifications`. |
 | **RabbitMQ** | Mensageria | Exchange `helpdesk.events` (topic), fila durável `notifications` ligada a `ticket.*` e *dead-letter queue* `notifications.dlq`. |
-| **PostgreSQL** | Persistência | Tabela `tickets` (dono: ticket-service) e `notifications` (dono: notification-service). Cada serviço cria e acessa apenas as próprias tabelas. |
+| **PostgreSQL** | Persistência | Tabelas `users`, `tickets` e `ticket_messages` (dono: ticket-service) e `notifications` (dono: notification-service). Cada serviço cria e acessa apenas as próprias tabelas. |
 
 ### API
 
 | Método | Rota | Serviço | Descrição |
 |---|---|---|---|
+| POST | `/api/auth/login` | ticket-service | Login; devolve o token e os dados da conta |
+| POST | `/api/auth/register` | ticket-service | Cria uma conta com o perfil usuário |
+| GET, POST | `/api/users` | ticket-service | Lista e cria contas (administrador) |
+| PATCH, DELETE | `/api/users/:id` | ticket-service | Altera o perfil ou exclui uma conta (administrador) |
 | GET | `/api/tickets` | ticket-service | Lista os chamados (`?status=` opcional) |
 | POST | `/api/tickets` | ticket-service | Abre um chamado |
 | GET | `/api/tickets/:id` | ticket-service | Consulta um chamado |
-| PATCH | `/api/tickets/:id` | ticket-service | Altera o status |
+| PATCH | `/api/tickets/:id` | ticket-service | Altera o status (operador ou administrador; fechar, só administrador) |
+| POST | `/api/tickets/:id/reopen-request` | ticket-service | O solicitante pede a reabertura, com justificativa |
+| DELETE | `/api/tickets/:id/reopen-request` | ticket-service | O atendimento recusa o pedido de reabertura |
+| POST | `/api/tickets/bulk-status` | ticket-service | Resolve ou fecha vários chamados com uma única justificativa |
+| GET | `/api/tickets/:id/messages` | ticket-service | Lista as mensagens da conversa do chamado |
+| POST | `/api/tickets/:id/messages` | ticket-service | Envia uma mensagem na conversa |
 | GET | `/api/notifications` | notification-service | Lista notificações (`?ticketId=` opcional) |
 | GET | `/healthz`, `/readyz`, `/metrics` | ambos | Liveness, readiness e métricas (uso interno) |
+
+### Autenticação e perfis de acesso
+
+O login é feito no `ticket-service`, que guarda as contas na tabela `users` (senha com hash scrypt e salt aleatório) e emite um token JWT assinado (HS256, validade de 8 horas) com o id, o nome, o e-mail e o perfil. O frontend envia o token no cabeçalho `Authorization` e os dois microsserviços o validam com o mesmo segredo (`JWT_SECRET`), sem consulta ao banco nem sessão em memória, o que mantém os serviços sem estado.
+
+| Ação | Usuário | Operador | Administrador |
+|---|:-:|:-:|:-:|
+| Abrir chamado | Sim | Sim | Sim |
+| Ver chamados | Só os próprios | Todos | Todos |
+| Colocar em andamento ou resolver (um a um ou em lote) | Não | Sim | Sim |
+| Reabrir chamado resolvido | Não | Sim | Sim |
+| Alterar ou devolver à fila um chamado fechado | Não | Não | Sim |
+| Fechar chamado (um a um ou em lote) | Não | Não | Sim |
+| Pedir reabertura, com justificativa | Só dos próprios | Não | Não |
+| Aceitar ou recusar pedido de reabertura | Não | Sim, de chamados resolvidos | Sim |
+| Conversar no chamado | Como solicitante, nos próprios | Como atendente | Como atendente |
+| Ver notificações | Só as próprias | Todas | Todas |
+| Gerir contas e perfis | Não | Não | Sim |
+
+As permissões são verificadas no backend em cada requisição; a tela apenas esconde o que o perfil não pode usar. Um chamado de outra pessoa responde 404 para o perfil usuário, para não revelar que existe.
+
+Limitações conhecidas: o perfil vai dentro do token, então uma mudança de perfil só vale no próximo login; não há bloqueio por tentativas de login nem troca de senha pela tela. A evolução natural é extrair as contas para um serviço de identidade próprio (ou um provedor como Keycloak ou Cognito).
+
+### Telas e navegação
+
+A interface é organizada em abas, que variam com o perfil: **Meus chamados**, **Novo chamado** e **Notificações** para o usuário; **Atendimento** e **Notificações** para o operador; e, para o administrador, também **Usuários**. O botão **Conversas**, sempre visível no topo, indica quantas conversas têm mensagens novas.
+
+A lista de chamados tem busca por texto, por usuário (e-mail do solicitante), prioridade, status e intervalo de datas, além de paginação. Os filtros são aplicados no navegador sobre os 1.000 chamados mais recentes devolvidos pela API. No atendimento, os chamados podem ser marcados um a um ou todos de uma vez (os do filtro atual), e resolvidos ou fechados em lote com uma única justificativa. A justificativa fica gravada no chamado (`close_reason`) e é incluída na notificação enviada a cada solicitante.
+
+### Ciclo de vida do chamado
+
+```mermaid
+stateDiagram-v2
+    [*] --> Aberto: usuário abre
+    Aberto --> EmAndamento: operador
+    EmAndamento --> Resolvido: operador
+    Aberto --> Resolvido: operador
+    Resolvido --> Fechado: administrador
+    Resolvido --> Aberto: operador reabre
+    Fechado --> Aberto: administrador devolve à fila
+    EmAndamento: Em andamento
+```
+
+O operador atende, resolve e reabre chamados resolvidos; **fechar é exclusivo do administrador e, depois de fechado, só ele pode alterar o chamado ou devolvê-lo à fila**. Se o problema voltar, o solicitante não precisa abrir outro chamado: ele pede a reabertura do mesmo, com uma justificativa. O pedido aparece destacado na fila do atendimento, que pode aceitar (o chamado volta para "Aberto") ou recusar — se o chamado estiver fechado, essa decisão cabe ao administrador; nos dois casos o solicitante é notificado. Só pode haver um pedido pendente por chamado.
+
+### Atendimento online
+
+Cada chamado tem uma conversa. O aviso de mensagem nova usa o resumo da conversa que a API devolve junto de cada chamado (quantidade e autor da última mensagem); o que já foi lido fica registrado no navegador de cada conta. A tela consulta as mensagens a cada 2 segundos (*polling*), o que dispensa WebSocket e mantém os serviços sem estado. Quando o atendente responde, o evento `ticket.message_added` gera uma notificação para o solicitante; mensagens do próprio solicitante são consumidas e ignoradas. Chamados fechados não aceitam novas mensagens. O papel na conversa vem do perfil da conta: usuário fala como solicitante; operador e administrador, como atendente.
 
 ## 4. Fluxos
 
@@ -181,6 +240,9 @@ Cada microsserviço expõe `/metrics` com a biblioteca `prom-client`. O Promethe
 | `http_request_duration_seconds` | Histograma | ambos | Taxa de requisições, latência (p95) e taxa de erro, por rota e status |
 | `tickets_created_total` | Contador | ticket-service | Indicador de negócio: chamados abertos, por prioridade |
 | `tickets_status_changed_total` | Contador | ticket-service | Mudanças de status |
+| `ticket_messages_total` | Contador | ticket-service | Mensagens da conversa, por papel do autor |
+| `ticket_reopen_requests_total` | Contador | ticket-service | Pedidos de reabertura, solicitados e recusados |
+| `auth_logins_total` | Contador | ticket-service | Tentativas de login, aceitas e recusadas |
 | `events_published_total` | Contador | ticket-service | Eventos publicados, com sucesso ou erro |
 | `events_consumed_total` | Contador | notification-service | Eventos consumidos: ok, duplicado, descartado ou erro |
 | `event_processing_duration_seconds` | Histograma | notification-service | Tempo de processamento de cada evento |

@@ -19,6 +19,7 @@ async function waitForDb(pool, attempts = 30) {
 }
 
 async function main() {
+  if (!config.jwtSecret) throw new Error('defina a variável de ambiente JWT_SECRET');
   const pool = createPool();
   pool.on('error', (err) => logger.error({ err: err.message }, 'erro no pool do Postgres'));
   await waitForDb(pool);
