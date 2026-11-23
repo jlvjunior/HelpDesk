@@ -1,0 +1,32 @@
+# Prometheus central (servidor de dados).
+# Federação: busca nos Prometheus dos dois servidores de aplicação as séries dos microsserviços,
+# já com o rótulo "node" de cada servidor. Os endereços vêm de /etc/helpdesk/apps.json (Terraform).
+global:
+  scrape_interval: 10s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  - job_name: federate
+    honor_labels: true
+    # Sem os horários de origem, uma falha de leitura marca as séries como encerradas na hora:
+    # se um servidor de aplicação cair, as réplicas dele somem do painel em segundos.
+    honor_timestamps: false
+    metrics_path: /federate
+    params:
+      'match[]':
+        - '{job=~"ticket-service|notification-service"}'
+    file_sd_configs:
+      - files: [/etc/helpdesk/apps.json]
+        refresh_interval: 30s
+
+  - job_name: rabbitmq
+    metrics_path: /metrics/per-object
+    static_configs:
+      - targets: [rabbitmq:15692]
+
+  - job_name: prometheus
+    static_configs:
+      - targets: [localhost:9090]

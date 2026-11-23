@@ -1,0 +1,73 @@
+# Servidor de APLICAÇÃO na AWS (há dois, em zonas de disponibilidade diferentes, atrás do ALB).
+# Roda o frontend (nginx) e duas réplicas de cada microsserviço; banco e fila ficam no servidor de dados.
+# Variáveis no .env desta pasta, gravado pelo Terraform: DADOS_HOST, DB_SENHA, MQ_SENHA, JWT_SECRET, NODE_NAME.
+name: helpdesk
+
+x-service-env: &service-env
+  DATABASE_URL: postgres://helpdesk:${DB_SENHA:?defina DB_SENHA}@${DADOS_HOST:?defina DADOS_HOST}:5432/helpdesk
+  AMQP_URL: amqp://helpdesk:${MQ_SENHA:?defina MQ_SENHA}@${DADOS_HOST}:5672
+  LOG_LEVEL: info
+  JWT_SECRET: ${JWT_SECRET:?defina JWT_SECRET}
+
+x-healthcheck: &node-healthcheck
+  test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/readyz"]
+  interval: 10s
+  timeout: 3s
+  retries: 5
+  start_period: 15s
+
+services:
+  ticket-service:
+    build: ../../../app/ticket-service
+    environment: *service-env
+    healthcheck: *node-healthcheck
+    deploy:
+      replicas: 2
+    restart: unless-stopped
+
+  notification-service:
+    build: ../../../app/notification-service
+    environment: *service-env
+    healthcheck: *node-healthcheck
+    deploy:
+      replicas: 2
+    restart: unless-stopped
+
+  # Recebe o tráfego do Application Load Balancer na porta 8080.
+  frontend:
+    build: ../../../app/frontend
+    ports:
+      - "8080:8080"
+    depends_on:
+      - ticket-service
+      - notification-service
+    restart: unless-stopped
+
+  # Prometheus local: coleta as réplicas deste servidor (DNS do Docker) e é lido
+  # pelo Prometheus central (federação), que identifica o servidor pelo rótulo "node".
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=1d
+      - --enable-feature=expand-external-labels
+    environment:
+      NODE_NAME: ${NODE_NAME:?defina NODE_NAME}
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+
+  # Envia os logs dos contêineres deste servidor para o Loki do servidor de dados.
+  promtail:
+    image: grafana/promtail:3.3.2
+    command: -config.file=/etc/promtail/config.yml -config.expand-env=true
+    environment:
+      LOKI_URL: http://${DADOS_HOST}:3100/loki/api/v1/push
+      NODE_NAME: ${NODE_NAME}
+    volumes:
+      - ../promtail.yml:/etc/promtail/config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped

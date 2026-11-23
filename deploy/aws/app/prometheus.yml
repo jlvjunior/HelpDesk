@@ -1,0 +1,19 @@
+# Prometheus de cada servidor de aplicação: coleta as réplicas locais.
+# O rótulo externo "node" (app-a ou app-b) diferencia os servidores no Prometheus central.
+global:
+  scrape_interval: 10s
+  external_labels:
+    node: ${NODE_NAME}
+
+scrape_configs:
+  - job_name: ticket-service
+    dns_sd_configs:
+      - names: [ticket-service]
+        type: A
+        port: 3000
+
+  - job_name: notification-service
+    dns_sd_configs:
+      - names: [notification-service]
+        type: A
+        port: 3000

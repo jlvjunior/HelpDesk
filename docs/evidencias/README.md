@@ -74,6 +74,7 @@ Situação em 09/11/2026 (primeira versão) e 17/11/2026 (versão com perfis). S
 - [ ] Mensagem do usuário aparece como "nova" no botão "Conversas" do operador
 - [ ] Operador não consegue fechar; o administrador fecha e devolve à fila
 - [ ] Pedido de reabertura do usuário aparece na fila e gera notificação
-- [x] `terraform apply` em `infra/aws` cria o servidor na AWS (23/11/2026) e a aplicação responde pelo IP público
+- [x] `terraform apply` em `infra/aws` (versão com servidor único) cria o servidor na AWS (23/11/2026) e a aplicação responde pelo IP público
+- [ ] Versão com load balancer: aplicação responde pelo ALB e continua no ar com o app-a desligado
 - [ ] `./scripts/k8s-up.sh` conclui sem erros
 - [ ] `kubectl -n helpdesk get pods` mostra todos os pods "Running" e distribuídos entre os nós

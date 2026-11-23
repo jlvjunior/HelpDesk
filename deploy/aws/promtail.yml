@@ -1,0 +1,34 @@
+# Promtail dos servidores na AWS: igual ao do ambiente local, mas envia para o Loki
+# indicado em LOKI_URL e marca cada linha com o servidor de origem (rótulo "node").
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: ${LOKI_URL}
+    external_labels:
+      node: ${NODE_NAME}
+
+scrape_configs:
+  - job_name: docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+    relabel_configs:
+      - source_labels: [__meta_docker_container_label_com_docker_compose_service]
+        target_label: service
+      - source_labels: [__meta_docker_container_name]
+        regex: /(.*)
+        target_label: container
+    pipeline_stages:
+      - match:
+          selector: '{service=~"ticket-service|notification-service"}'
+          stages:
+            - json:
+                expressions:
+                  level: level
+            - labels:
+                level:

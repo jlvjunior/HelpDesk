@@ -100,9 +100,9 @@ kubectl -n helpdesk get pods,hpa -o wide
 
 As URLs são as mesmas da opção A (não rode as duas opções ao mesmo tempo, pois usam as mesmas portas).
 
-### Opção C — Nuvem AWS (AWS Academy) com deploy automático pelo GitHub
+### Opção C — Nuvem AWS (AWS Academy) com alta disponibilidade e deploy automático
 
-O Terraform de [infra/aws](infra/aws/) cria um servidor EC2 com IP fixo que sobe a pilha inteira, e o workflow [deploy-aws.yml](.github/workflows/deploy-aws.yml) atualiza o servidor a cada push na `main`, depois de rodar os testes. Passo a passo completo: [docs/AWS-ACADEMY.md](docs/AWS-ACADEMY.md).
+O Terraform de [infra/aws](infra/aws/) cria um **Application Load Balancer** e **dois servidores de aplicação em zonas de disponibilidade diferentes**, mais um servidor de dados e observabilidade. Se um servidor de aplicação cair, o ALB manda o tráfego para o outro. O workflow [deploy-aws.yml](.github/workflows/deploy-aws.yml) roda os testes e atualiza os servidores **um de cada vez** a cada push na `main`. Passo a passo e testes de alta disponibilidade: [docs/AWS-ACADEMY.md](docs/AWS-ACADEMY.md).
 
 ```bash
 cd infra/aws
@@ -110,7 +110,7 @@ terraform init
 terraform apply -var="grafana_senha=<sua-senha>"
 ```
 
-O endereço aparece no fim do `apply` (`endereco_aplicacao`). O servidor só fica ligado enquanto o Learner Lab estiver ativo (**Start Lab**).
+O endereço aparece no fim do `apply` (`endereco_aplicacao`). Os servidores só ficam ligados enquanto o Learner Lab estiver ativo (**Start Lab**).
 
 ### Testes automatizados
 
@@ -150,8 +150,8 @@ docker-compose.yml
 | Prometheus (todos os alvos "UP"), dashboard do Grafana e logs no Loki | Validados — ver [docs/evidencias](docs/evidencias/) |
 | Login, perfis, filtros, conversas, ações em lote e reabertura | Testados em navegador com PostgreSQL real; validação no Docker Compose pela checklist de [docs/evidencias](docs/evidencias/README.md) |
 | `terraform apply` e deploy no Kubernetes (kind) | Código entregue, **ainda não executado** |
-| Deploy na AWS (Terraform `infra/aws`) | Executado em 23/11/2026 no AWS Academy: EC2 com Elastic IP, 11 contêineres no ar, aplicação e Grafana acessíveis pelo IP público |
-| Deploy contínuo (GitHub Actions `deploy-aws.yml`) | Testes e build a cada push; o deploy na EC2 roda depois de cadastrar os segredos `AWS_EC2_HOST` e `AWS_EC2_SSH_KEY` |
+| Deploy na AWS (Terraform `infra/aws`) | Servidor único executado em 23/11/2026 no AWS Academy; versão com ALB e dois servidores de aplicação **a registrar** |
+| Deploy contínuo (GitHub Actions `deploy-aws.yml`) | Testes e build a cada push; deploy gradual (dados → app-a → app-b) depois de cadastrar os segredos da AWS |
 
 ---
 

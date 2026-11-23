@@ -8,6 +8,14 @@ groups:
         annotations:
           summary: "Réplica de {{ $labels.job }} fora do ar ({{ $labels.instance }})"
 
+      # Na AWS: o Prometheus central não consegue ler um servidor de aplicação inteiro.
+      - alert: ServidorDeAplicacaoFora
+        expr: up{job="federate"} == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "Servidor de aplicação {{ $labels.node }} fora do ar ({{ $labels.instance }})"
+
       - alert: TaxaDeErroAlta
         expr: |
           sum by (service) (rate(http_request_duration_seconds_count{status=~"5.."}[5m]))

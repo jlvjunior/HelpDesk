@@ -1,0 +1,98 @@
+# Servidor de DADOS e OBSERVABILIDADE na AWS: PostgreSQL, RabbitMQ, Prometheus central,
+# Loki e Grafana. Os servidores de aplicação se conectam a ele pela rede privada da VPC.
+# Variáveis no .env desta pasta, gravado pelo Terraform: DB_SENHA, MQ_SENHA, GRAFANA_SENHA.
+name: helpdesk-dados
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: helpdesk
+      POSTGRES_PASSWORD: ${DB_SENHA:?defina DB_SENHA}
+      POSTGRES_DB: helpdesk
+    ports:
+      - "5432:5432" # aberto só para os servidores de aplicação (grupo de segurança)
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U helpdesk -d helpdesk"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: helpdesk
+      RABBITMQ_DEFAULT_PASS: ${MQ_SENHA:?defina MQ_SENHA}
+    ports:
+      - "5672:5672"   # AMQP: só para os servidores de aplicação
+      - "15672:15672" # painel: só para o IP do administrador, se liberado
+    volumes:
+      - rabbitdata:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # Prometheus central: lê os dois servidores de aplicação por federação, o RabbitMQ e a si mesmo.
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../../../infra/observability/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - /etc/helpdesk:/etc/helpdesk:ro # apps.json: endereços dos servidores de aplicação
+      - promdata:/prometheus
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+
+  loki:
+    image: grafana/loki:3.3.2
+    command: -config.file=/etc/loki/local-config.yaml
+    ports:
+      - "3100:3100" # recebe os logs dos servidores de aplicação
+    volumes:
+      - lokidata:/loki
+    restart: unless-stopped
+
+  promtail:
+    image: grafana/promtail:3.3.2
+    command: -config.file=/etc/promtail/config.yml -config.expand-env=true
+    environment:
+      LOKI_URL: http://loki:3100/loki/api/v1/push
+      NODE_NAME: dados
+    volumes:
+      - ../promtail.yml:/etc/promtail/config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - loki
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_SENHA:?defina GRAFANA_SENHA}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/helpdesk.json
+    volumes:
+      - ../../../infra/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../../../infra/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafanadata:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+      - loki
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  rabbitdata:
+  promdata:
+  lokidata:
+  grafanadata:

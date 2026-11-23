@@ -1,11 +1,12 @@
 #!/bin/bash
-# Primeiro boot do servidor: instala o Docker, clona o repositório e sobe a pilha.
+# Primeiro boot de cada servidor: instala o Docker, clona o repositório e sobe a parte que
+# cabe a este servidor (papel "${papel}": dados ou app).
 # Log completo em /var/log/helpdesk-inicializacao.log
 exec > /var/log/helpdesk-inicializacao.log 2>&1
 set -euo pipefail
-echo ">> Instalando swap, Docker e Git"
+echo ">> Servidor ${nome} (papel ${papel})"
 
-# Memória extra (swap) para o build das imagens não faltar memória.
+echo ">> Instalando swap, Docker e Git"
 if [ ! -f /swapfile ]; then
   fallocate -l 2G /swapfile
   chmod 600 /swapfile
@@ -13,12 +14,10 @@ if [ ! -f /swapfile ]; then
   swapon /swapfile
   echo '/swapfile none swap sw 0 0' >> /etc/fstab
 fi
-
 dnf install -y docker git
 systemctl enable --now docker
 usermod -aG docker ec2-user
 
-# Plugins do Docker: Compose e Buildx (o Amazon Linux não traz por padrão).
 mkdir -p /usr/local/lib/docker/cli-plugins
 curl -fsSL https://github.com/docker/compose/releases/download/v2.32.4/docker-compose-linux-x86_64 \
   -o /usr/local/lib/docker/cli-plugins/docker-compose
@@ -27,20 +26,58 @@ curl -fsSL https://github.com/docker/buildx/releases/download/v0.19.3/buildx-v0.
 chmod +x /usr/local/lib/docker/cli-plugins/*
 
 echo ">> Clonando o repositório"
-# Código da aplicação, direto do GitHub.
 git clone https://github.com/${repositorio}.git /opt/helpdesk
-
-# Configuração do ambiente de nuvem (fora do Git).
-cat > /opt/helpdesk/.env <<CONFIG
-COMPOSE_FILE=docker-compose.yml:docker-compose.aws.yml
-JWT_SECRET=${jwt_secret}
-GRAFANA_SENHA=${grafana_senha}
-CONFIG
-chmod 600 /opt/helpdesk/.env
 chown -R ec2-user:ec2-user /opt/helpdesk
 
-echo ">> Subindo a pilha com Docker Compose (build das imagens)"
-cd /opt/helpdesk
-docker compose up -d --build
+%{ if papel == "dados" ~}
+# Endereços dos servidores de aplicação para a federação do Prometheus.
+mkdir -p /etc/helpdesk
+cat > /etc/helpdesk/apps.json <<'APPS'
+[
+%{ for i, ip in ips_apps ~}
+  { "targets": ["${ip}:9090"], "labels": { "servidor": "app-${i == 0 ? "a" : "b"}" } }${i < length(ips_apps) - 1 ? "," : ""}
+%{ endfor ~}
+]
+APPS
+
+cat > /opt/helpdesk/deploy/aws/dados/.env <<CONFIG
+DB_SENHA=${db_senha}
+MQ_SENHA=${mq_senha}
+GRAFANA_SENHA=${grafana_senha}
+CONFIG
+chmod 600 /opt/helpdesk/deploy/aws/dados/.env
+chown ec2-user:ec2-user /opt/helpdesk/deploy/aws/dados/.env
+
+echo ">> Subindo banco, fila e observabilidade"
+cd /opt/helpdesk/deploy/aws/dados
+docker compose up -d
+%{ else ~}
+cat > /opt/helpdesk/deploy/aws/app/.env <<CONFIG
+NODE_NAME=${nome}
+DADOS_HOST=${ip_dados}
+DB_SENHA=${db_senha}
+MQ_SENHA=${mq_senha}
+JWT_SECRET=${jwt_secret}
+CONFIG
+chmod 600 /opt/helpdesk/deploy/aws/app/.env
+chown ec2-user:ec2-user /opt/helpdesk/deploy/aws/app/.env
+
+echo ">> Construindo as imagens enquanto o servidor de dados sobe"
+cd /opt/helpdesk/deploy/aws/app
+docker compose build
+
+echo ">> Aguardando o servidor de dados (${ip_dados}) responder"
+for i in $(seq 1 90); do
+  if timeout 3 bash -c "</dev/tcp/${ip_dados}/5432" 2>/dev/null && timeout 3 bash -c "</dev/tcp/${ip_dados}/5672" 2>/dev/null; then
+    echo "Servidor de dados pronto."
+    break
+  fi
+  sleep 10
+done
+sleep ${espera}
+
+echo ">> Subindo a aplicação"
+docker compose up -d
+%{ endif ~}
 docker compose ps
 echo "HELPDESK PRONTO"

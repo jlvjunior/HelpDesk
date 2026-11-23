@@ -214,13 +214,13 @@ Se o chamado estiver fechado, só o administrador pode aceitar ou recusar o pedi
 
 | | Docker Compose (local) | Kubernetes (kind) | Nuvem AWS (AWS Academy) |
 |---|---|---|---|
-| Finalidade | Desenvolvimento e demo rápida | Demonstração de HA e escalabilidade | Aplicação online, com endereço público |
-| Provisionamento | `docker compose up` | Terraform (`infra/terraform`) + Kustomize (`infra/k8s`) | Terraform (`infra/aws`): EC2, grupo de segurança e Elastic IP |
-| Atualização | Manual | Manual (`kubectl apply -k`) | Automática pelo GitHub Actions a cada push na `main` |
-| Réplicas dos serviços | 2 fixas | 2 a 6, com HPA | 2 fixas |
-| Nós | 1 (a máquina local) | 1 control-plane + 2 workers | 1 servidor EC2 t3.large |
-| Descoberta de serviço | DNS do Docker | Services do Kubernetes | DNS do Docker |
-| Observabilidade | Prometheus, Loki, Promtail e Grafana em containers | kube-prometheus-stack e loki-stack via Helm | Igual ao local, com Grafana protegido por senha |
+| Finalidade | Desenvolvimento e demo rápida | Demonstração de HA e escalabilidade | Aplicação online, com HA entre servidores |
+| Provisionamento | `docker compose up` | Terraform (`infra/terraform`) + Kustomize (`infra/k8s`) | Terraform (`infra/aws`): ALB, 3 EC2, grupos de segurança e Elastic IPs |
+| Atualização | Manual | Manual (`kubectl apply -k`) | GitHub Actions a cada push na `main`, um servidor de cada vez |
+| Réplicas dos serviços | 2 fixas | 2 a 6, com HPA | 4 (2 em cada servidor de aplicação) |
+| Nós | 1 (a máquina local) | 1 control-plane + 2 workers | 2 servidores de aplicação (zonas a e b) + 1 de dados |
+| Descoberta de serviço | DNS do Docker | Services do Kubernetes | ALB entre servidores; DNS do Docker dentro de cada um |
+| Observabilidade | Prometheus, Loki, Promtail e Grafana em containers | kube-prometheus-stack e loki-stack via Helm | Prometheus por servidor + central com federação; Promtail em cada servidor enviando ao Loki central |
 
 ### Infraestrutura como código
 
@@ -233,13 +233,31 @@ O Terraform (`infra/terraform`) cria:
 
 Os manifestos da aplicação (`infra/k8s`) são aplicados com `kubectl apply -k` e incluem Deployments, Services, HPAs, PodDisruptionBudgets, ServiceMonitors, regras de alerta e o dashboard do Grafana.
 
-Na nuvem, o Terraform de `infra/aws` cria, no AWS Academy Learner Lab:
+Na nuvem, o Terraform de `infra/aws` cria, no AWS Academy Learner Lab, uma topologia com alta disponibilidade na camada de aplicação:
 
-1. um **grupo de segurança** que libera só a aplicação (80), o Grafana (3000) e o SSH por chave (22); Prometheus e RabbitMQ ficam fechados, ou abertos só para o IP do administrador;
-2. um servidor **EC2 t3.large** com Amazon Linux 2023, usando o perfil `LabInstanceProfile` do laboratório;
-3. um **Elastic IP**, para o endereço não mudar quando o laboratório desliga e religa o servidor.
+```mermaid
+flowchart TB
+    U([Usuários]) -->|HTTP :80| ALB[Application Load Balancer<br/>zonas us-east-1a e us-east-1b]
+    ALB -->|:8080, health check /api/tickets| A[EC2 app-a · zona a<br/>nginx + 2× ticket + 2× notification]
+    ALB -->|:8080, health check /api/tickets| B[EC2 app-b · zona b<br/>nginx + 2× ticket + 2× notification]
+    A -->|5432 / 5672 / 3100| D[(EC2 dados<br/>PostgreSQL · RabbitMQ · Loki<br/>Prometheus central · Grafana)]
+    B -->|5432 / 5672 / 3100| D
+    D -.->|federação :9090| A
+    D -.->|federação :9090| B
+    GH[GitHub Actions] -->|SSH: dados → app-a → app-b| D
+```
 
-No primeiro boot, o script de inicialização instala o Docker, clona este repositório e sobe a pilha com `docker-compose.yml` + `docker-compose.aws.yml`. O segredo dos tokens de login é gerado pelo Terraform e fica num `.env` fora do Git. Depois disso, o workflow `.github/workflows/deploy-aws.yml` testa os microsserviços, constrói as imagens e atualiza o servidor por SSH a cada push na `main`, conferindo no fim se a aplicação responde. Passo a passo: [docs/AWS-ACADEMY.md](../AWS-ACADEMY.md).
+1. **Application Load Balancer** em duas zonas de disponibilidade, que verifica a saúde de cada servidor a cada 10 segundos (`/api/tickets` deve responder 401, o que prova que nginx e ticket-service estão vivos) e tira do balanceamento quem falhar duas vezes seguidas;
+2. **dois servidores de aplicação** (t3.medium), um em cada zona, cada um com o nginx e duas réplicas de cada microsserviço;
+3. **um servidor de dados e observabilidade** com PostgreSQL, RabbitMQ, Loki, o Prometheus central e o Grafana;
+4. **grupos de segurança** em camadas: só o ALB fala com a porta 8080 dos servidores de aplicação; só os servidores de aplicação falam com banco, fila e Loki; o Grafana é público, protegido por senha;
+5. **Elastic IPs** para o acesso por SSH do GitHub Actions não mudar quando o laboratório religa os servidores.
+
+Os IPs privados são fixos, então cada servidor já nasce sabendo onde estão os outros. O script de inicialização instala o Docker, clona este repositório e sobe a parte que cabe ao servidor (`deploy/aws/dados` ou `deploy/aws/app`). As senhas do banco e da fila e o segredo dos tokens são gerados pelo Terraform e gravados em arquivos `.env` fora do Git.
+
+Na observabilidade, cada servidor de aplicação tem um Prometheus local que coleta as réplicas dele; o Prometheus central lê os dois por **federação**, com o rótulo `node` (app-a ou app-b) em cada série, e o Promtail de cada servidor envia os logs ao Loki central. O mesmo dashboard mostra as 4 réplicas e de que servidor cada uma é.
+
+O workflow `.github/workflows/deploy-aws.yml` testa os microsserviços, constrói as imagens e atualiza por SSH o servidor de dados e depois **um servidor de aplicação de cada vez**, esperando cada um voltar a responder antes de seguir. Passo a passo e roteiro de testes de alta disponibilidade: [docs/AWS-ACADEMY.md](../AWS-ACADEMY.md).
 
 ## 7. Alta disponibilidade e escalabilidade
 
@@ -255,11 +273,13 @@ No primeiro boot, o script de inicialização instala o Docker, clona este repos
 | **Proteção em manutenção** | `PodDisruptionBudget` com `minAvailable: 1` | Drenar um nó nunca remove todas as réplicas |
 | **Desacoplamento** | Mensageria entre chamados e notificações | Falha ou lentidão nas notificações não afeta a abertura de chamados |
 | **Resiliência de mensagens** | Fila durável, mensagens persistentes, *publisher confirms*, *ack* manual, DLQ, idempotência | Nenhuma notificação é perdida nem duplicada em caso de falha |
+| **Load balancer entre zonas (AWS)** | Application Load Balancer com dois servidores de aplicação em zonas diferentes e health check a cada 10 s | A queda de um servidor ou de uma zona inteira não tira a aplicação do ar |
+| **Deploy gradual (AWS)** | GitHub Actions atualiza um servidor de aplicação de cada vez e espera ele responder | Atualização sem desligar a aplicação |
 | **Reconexão automática** | Retentativas de conexão com o banco e com o broker | Os serviços se recuperam sozinhos da volta de uma dependência |
 
 ### Limitações conhecidas do ambiente local
 
-PostgreSQL e RabbitMQ rodam com **uma instância cada**, pois o objetivo do ambiente local é custo zero. Eles são os pontos únicos de falha desta implantação. Além disso, a publicação do evento ocorre depois do *commit* no banco; se o broker estiver fora nesse instante, o chamado é salvo, mas o evento não é publicado.
+PostgreSQL e RabbitMQ rodam com **uma instância cada**, inclusive na AWS, onde ficam no servidor de dados. Eles são os pontos únicos de falha desta implantação; a camada de aplicação, na AWS, já tem redundância entre zonas. Além disso, a publicação do evento ocorre depois do *commit* no banco; se o broker estiver fora nesse instante, o chamado é salvo, mas o evento não é publicado.
 
 ### Evolução para produção em nuvem
 

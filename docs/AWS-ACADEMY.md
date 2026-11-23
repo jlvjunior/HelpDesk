@@ -1,126 +1,157 @@
-# HelpDesk Cloud na AWS (AWS Academy Learner Lab)
+# HelpDesk Cloud na AWS (AWS Academy Learner Lab) com alta disponibilidade
 
-Passo a passo para deixar a aplicação online na AWS, criada pelo Terraform e atualizada automaticamente pelo GitHub Actions.
+Passo a passo para deixar a aplicação online na AWS, com **load balancer e dois servidores de aplicação em zonas diferentes**, criada pelo Terraform e atualizada automaticamente pelo GitHub Actions.
 
-**Como funciona:** o Terraform (`infra/aws`) cria um servidor EC2 com IP fixo. No primeiro boot, o servidor instala o Docker, clona este repositório e sobe tudo com Docker Compose. Depois, a cada `git push` na `main`, o GitHub Actions roda os testes e atualiza o servidor por SSH.
+## Como funciona
+
+```
+                     Internet
+                        │ :80
+          Application Load Balancer (zonas a e b)
+             ┌──────────┴──────────┐
+     EC2 app-a (us-east-1a)  EC2 app-b (us-east-1b)    frontend + 2 réplicas de cada microsserviço
+             └──────────┬──────────┘
+     EC2 dados: PostgreSQL, RabbitMQ, Prometheus, Loki, Grafana
+```
+
+| Servidor | O que roda | Acesso |
+|---|---|---|
+| **ALB** (load balancer) | Distribui as requisições entre app-a e app-b; verifica a saúde de cada um a cada 10 s | Público, porta 80 |
+| **app-a** e **app-b** | nginx (frontend), 2× ticket-service, 2× notification-service, Prometheus local e Promtail | Só o ALB (8080) e SSH |
+| **dados** | PostgreSQL, RabbitMQ, Prometheus central (federação), Loki e Grafana | Grafana (3000) e SSH; banco, fila e Loki só para os servidores de aplicação |
+
+**Alta disponibilidade:** se um servidor de aplicação (ou a zona dele) cair, o ALB percebe em cerca de 20 segundos e manda todo o tráfego para o outro. Os dados ficam no servidor de dados, então nada se perde. O servidor de dados continua único: em produção ele viraria RDS Multi-AZ e Amazon MQ (ver README de arquitetura).
+
+**Deploy sem parar a aplicação:** o GitHub Actions atualiza um servidor de aplicação de cada vez; enquanto um reinicia, o outro atende.
 
 **Importante sobre o Learner Lab:**
 
-- O servidor só fica ligado enquanto o laboratório está ativo (sessão de até 4 horas). Quando a sessão acaba, ele é desligado e volta sozinho no próximo **Start Lab**, com o mesmo IP e os mesmos dados.
+- Os servidores só ficam ligados enquanto o laboratório está ativo (sessões de até 4 horas). Quando a sessão acaba, eles desligam e voltam sozinhos no próximo **Start Lab**, com os mesmos IPs e os mesmos dados.
 - **Nunca clique em Reset**: ele apaga tudo o que foi criado na conta.
-- O custo sai do crédito do laboratório (a t3.large custa poucos centavos de dólar por hora ligada).
+- Custo aproximado: 3 servidores t3.medium + ALB ≈ US$ 0,20 por hora de laboratório ligado.
 
 ---
 
-## Parte 1 — Enviar os arquivos novos para o GitHub (no seu PC)
-
-O servidor clona o repositório do GitHub, então os arquivos de `infra/aws` e o `docker-compose.aws.yml` precisam estar lá antes.
+## Parte 1 — Enviar os arquivos para o GitHub (no seu PC)
 
 ```powershell
+cd C:\HelpDesk
 git add .
-git commit -m "Deploy na AWS com Terraform e GitHub Actions"
+git commit -m "Alta disponibilidade na AWS: ALB e dois servidores de aplicação"
 git push
 ```
 
 ## Parte 2 — Criar a infraestrutura (no terminal do laboratório)
 
-1. No AWS Academy, abra **Laboratório de aprendizagem → Iniciar os laboratórios**, clique em **Start Lab** e espere a bolinha ao lado de **AWS** ficar **verde**.
-2. Clique na área preta (o terminal do laboratório). As credenciais da AWS já estão configuradas nele.
-3. Instale o Terraform (só na primeira vez):
+1. No AWS Academy: **Start Lab** e espere a bolinha de **AWS** ficar verde.
+2. Atualize as credenciais: **AWS Details → AWS CLI: Show**, copie o bloco e, no terminal:
 
    ```bash
-   mkdir -p ~/bin && cd ~/bin
-   curl -fsSLO https://releases.hashicorp.com/terraform/1.9.8/terraform_1.9.8_linux_amd64.zip
-   unzip -o terraform_1.9.8_linux_amd64.zip && rm terraform_1.9.8_linux_amd64.zip
-   echo 'export PATH=$HOME/bin:$PATH' >> ~/.bashrc && export PATH=$HOME/bin:$PATH
-   terraform version
+   cat > ~/credenciais-aws
    ```
+   Cole, aperte **Enter** e depois **Ctrl+D**. Então:
+   ```bash
+   chmod 600 ~/credenciais-aws
+   export AWS_SHARED_CREDENTIALS_FILE=~/credenciais-aws
+   export PATH=$HOME/bin:$PATH
+   aws sts get-caller-identity
+   ```
+   Deve mostrar `Account` e `Arn`.
 
-4. Baixe o projeto:
+3. Atualize o projeto e aplique (troque pela sua senha do Grafana: 8 a 64 caracteres, letras, números e `@ # % + = _ . -`):
 
    ```bash
-   cd ~ && git clone https://github.com/jlvjunior/HelpDesk.git
-   cd ~/HelpDesk/infra/aws
+   cd ~/HelpDesk && git pull
+   cd infra/aws
+   terraform init -upgrade
+   terraform apply -var="grafana_senha=SUA_SENHA"
    ```
 
-5. Crie a infraestrutura. Troque `MinhaSenhaGrafana2026` por uma senha sua (8 a 64 caracteres: letras, números e `@ # % + = _ . -`):
-
-   ```bash
-   terraform init
-   terraform apply -var="grafana_senha=MinhaSenhaGrafana2026"
-   ```
-
-   Confira a lista do que será criado e digite **yes**. Em cerca de 1 minuto aparecem as saídas:
+   Se já havia o servidor único da versão anterior, o plano mostra que ele será **destruído** e os novos recursos **criados** (algo como `17 to add, 0 to change, 3 to destroy`). Digite **yes**. Em 3 a 5 minutos aparecem as saídas:
 
    ```
-   endereco_aplicacao = "http://54.x.x.x"
+   endereco_aplicacao = "http://helpdesk-alb-123456789.us-east-1.elb.amazonaws.com"
    endereco_grafana   = "http://54.x.x.x:3000"
-   ip_publico         = "54.x.x.x"
+   segredos_github    = { AWS_ALB_DNS = "...", AWS_HOST_APP_A = "...", AWS_HOST_APP_B = "...", AWS_HOST_DADOS = "..." }
+   atalhos_ssh        = <<EOT ... EOT
    ```
 
-   Anote o **ip_publico**. Para ver de novo depois: `terraform output`.
-
-6. Espere de **5 a 10 minutos**: o servidor está instalando o Docker e construindo as imagens. Para acompanhar (opcional):
+4. Crie os atalhos de acesso (copie as 3 linhas `alias` da saída `atalhos_ssh` e cole no terminal). Para ficarem salvos nas próximas sessões:
 
    ```bash
-   ssh -i ~/.ssh/labsuser.pem -o StrictHostKeyChecking=no ec2-user@<ip_publico> 'sudo tail -f /var/log/helpdesk-inicializacao.log'
+   terraform output -raw atalhos_ssh >> ~/.bashrc
    ```
 
-   Quando aparecer **HELPDESK PRONTO**, aperte Ctrl+C. Se o arquivo `~/.ssh/labsuser.pem` não existir no terminal, pule este passo e só espere os 10 minutos.
+5. Espere **8 a 12 minutos**: o servidor de dados sobe primeiro; os servidores de aplicação constroem as imagens e esperam por ele. Para acompanhar:
 
-7. Abra no navegador:
-   - Aplicação: `http://<ip_publico>`, com as contas de demonstração do README;
-   - Grafana: `http://<ip_publico>:3000`, usuário `admin` e a senha do passo 5.
+   ```bash
+   hd-dados 'sudo tail -n 5 /var/log/helpdesk-inicializacao.log'
+   hd-a 'sudo tail -n 5 /var/log/helpdesk-inicializacao.log'
+   hd-b 'sudo tail -n 5 /var/log/helpdesk-inicializacao.log'
+   ```
 
-> O Terraform guarda o estado (`terraform.tfstate`) na pasta `~/HelpDesk/infra/aws` do terminal do laboratório, que é mantida entre as sessões. Não apague essa pasta: é ela que permite alterar ou destruir a infraestrutura depois.
+   Os três devem terminar em **HELPDESK PRONTO**.
+
+6. Abra o `endereco_aplicacao` no navegador (pode levar mais 1 minuto para o ALB marcar os servidores como saudáveis) e o `endereco_grafana` (usuário `admin`).
 
 ## Parte 3 — Ligar o deploy automático (no GitHub)
 
-1. No AWS Academy, clique em **AWS Details** → ao lado de **SSH key**, clique em **Download PEM**. O arquivo `labsuser.pem` vai para a pasta Downloads.
-2. Abra o `labsuser.pem` no Bloco de Notas e copie **todo** o conteúdo, inclusive as linhas `-----BEGIN RSA PRIVATE KEY-----` e `-----END RSA PRIVATE KEY-----`.
-3. No GitHub, abra o repositório HelpDesk → **Settings → Secrets and variables → Actions → New repository secret** e crie:
+1. No AWS Academy: **AWS Details → Download PEM** (arquivo `labsuser.pem`).
+2. No GitHub: **Settings → Secrets and variables → Actions**. Apague o segredo antigo `AWS_EC2_HOST`, se existir, e crie:
 
    | Nome | Valor |
    |---|---|
-   | `AWS_EC2_HOST` | o `ip_publico` (só os números, ex.: `54.12.34.56`) |
-   | `AWS_EC2_SSH_KEY` | o conteúdo do `labsuser.pem` |
+   | `AWS_EC2_SSH_KEY` | conteúdo inteiro do `labsuser.pem` (se já existe, mantenha) |
+   | `AWS_HOST_DADOS` | valor de `AWS_HOST_DADOS` na saída `segredos_github` |
+   | `AWS_HOST_APP_A` | valor de `AWS_HOST_APP_A` |
+   | `AWS_HOST_APP_B` | valor de `AWS_HOST_APP_B` |
+   | `AWS_ALB_DNS` | valor de `AWS_ALB_DNS` (só o nome, sem `http://`) |
 
-4. Teste: **Actions → CI/CD — HelpDesk Cloud na AWS → Run workflow**. As etapas são:
-   **🧪 Testes e build** → **🐳 Build das imagens Docker** → **🚀 Deploy na AWS**.
-   No fim, o resumo mostra o endereço da aplicação.
+3. Teste: **Actions → CI/CD — HelpDesk Cloud na AWS → Run workflow**. As etapas: **🧪 Testes e build** → **🐳 Build das imagens** → **🚀 Deploy gradual na AWS** (dados → app-a → app-b → verificação pelo load balancer).
 
-A partir daí, todo `git push` na `main` (fora mudanças só em documentação) testa e atualiza o servidor sozinho.
+## Parte 4 — Testes de alta disponibilidade (ótimos para a apresentação)
 
-> Não compartilhe o `labsuser.pem` nem cole o conteúdo dele em chat ou e-mail: ele dá acesso ao servidor.
+Abra a aplicação pelo `endereco_aplicacao` e o Grafana lado a lado.
 
-## Parte 4 — Dia da apresentação
+**1. Ver o balanceamento:** gere carga e veja, no painel **Requisições por réplica (balanceamento)**, as 4 réplicas do ticket-service (2 em app-a, 2 em app-b) recebendo tráfego:
 
-1. Uns 10 minutos antes: **Start Lab** e espere a bolinha verde. O servidor religa sozinho e os containers sobem em 2 a 3 minutos.
-2. Abra `http://<ip_publico>` e o Grafana. Se quiser dados no dashboard, gere carga a partir do seu PC (WSL):
+```bash
+cd ~/HelpDesk && bash scripts/gerar-carga.sh 100 "http://$(cd infra/aws && terraform output -raw alb_dns)"
+```
 
-   ```bash
-   wsl -d Ubuntu bash ./scripts/gerar-carga.sh 100 http://<ip_publico>
-   ```
+**2. Derrubar um servidor inteiro:**
 
-3. Demonstração extra: altere um texto da tela, faça `git push` e mostre o GitHub Actions atualizando a nuvem.
-4. Ao terminar: **End Lab**, para economizar crédito.
+```bash
+hd-a 'cd /opt/helpdesk/deploy/aws/app && docker compose stop'
+```
+
+- A aplicação continua funcionando pelo mesmo endereço (o ALB tira o app-a do balanceamento em cerca de 20 s).
+- No Grafana, **Réplicas ticket-service no ar** cai de 4 para 2, e o alerta `ServidorDeAplicacaoFora` aparece no Prometheus.
+
+Para voltar:
+
+```bash
+hd-a 'cd /opt/helpdesk/deploy/aws/app && docker compose start'
+```
+
+**3. Desligar a máquina pelo console (queda real de servidor):** no console da AWS, **EC2 → Instâncias → helpdesk-app-b → Estado da instância → Interromper**. A aplicação segue no ar pelo app-a. Depois, **Iniciar** de novo: o app-b volta ao balanceamento sozinho.
+
+**4. Deploy sem parar a aplicação:** altere um texto da tela, faça `git push` e, enquanto o GitHub Actions atualiza app-a e depois app-b, continue usando a aplicação.
 
 ## Problemas comuns
 
 | Sintoma | Causa e solução |
 |---|---|
-| `terraform: command not found` | Rode `export PATH=$HOME/bin:$PATH` ou repita o passo 3 da Parte 2. |
-| Erro `UnauthorizedOperation` ou `ExpiredToken` no Terraform | A sessão do laboratório expirou. Clique em **Start Lab** e rode o comando de novo. |
-| Erro dizendo que a chave `vockey` não existe | Confirme que a região é `us-east-1` (padrão do projeto). |
-| O site não abre depois de 10 minutos | Veja o log (passo 6 da Parte 2). Se o servidor acabou de religar, espere mais 3 minutos. |
-| Deploy do GitHub falha com "Não consegui conectar ao servidor" | O laboratório está desligado. **Start Lab** e **Run workflow** de novo. |
-| Grafana não aceita a senha | O usuário é `admin`. A senha é a do `terraform apply`. |
+| `InvalidClientTokenId` / `ExpiredToken` | Credenciais vencidas: refaça o passo 2 da Parte 2. |
+| `terraform: command not found` | `export PATH=$HOME/bin:$PATH` |
+| Erro ao criar o load balancer | Confirme que a região é `us-east-1` e que as zonas `us-east-1a` e `us-east-1b` existem (`aws ec2 describe-availability-zones`). Se uma não estiver disponível, rode o apply com `-var='zonas=["us-east-1a","us-east-1c"]'`. |
+| Erro dizendo que o IP privado está em uso | Outro recurso usa o endereço `.200`/`.201` da sub-rede. Me avise para trocar os números em `main.tf`. |
+| ALB responde **502/503** | Os servidores ainda estão instalando (veja o log da Parte 2, passo 5) ou o servidor de dados ainda não subiu. |
+| Deploy do GitHub: "Não consegui conectar" | O laboratório está desligado: **Start Lab** e **Run workflow** de novo. |
 
 ## Remover tudo (depois da nota)
 
-No terminal do laboratório:
-
 ```bash
 cd ~/HelpDesk/infra/aws
-terraform destroy -var="grafana_senha=MinhaSenhaGrafana2026"
+terraform destroy -var="grafana_senha=SUA_SENHA"
 ```

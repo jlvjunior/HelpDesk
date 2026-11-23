@@ -577,8 +577,8 @@
       },
       "targets": [
         {
-          "expr": "sum by (instance) (rate(http_request_duration_seconds_count{service=\"ticket-service\"}[1m]))",
-          "legendFormat": "{{instance}}",
+          "expr": "sum by (node, instance) (rate(http_request_duration_seconds_count{service=\"ticket-service\"}[1m]))",
+          "legendFormat": "{{instance}} {{node}}",
           "refId": "A",
           "datasource": {
             "type": "prometheus",
@@ -623,7 +623,7 @@
       "targets": [
         {
           "expr": "rate(process_cpu_seconds_total{job=~\"ticket-service|notification-service\"}[1m])",
-          "legendFormat": "{{job}} {{instance}}",
+          "legendFormat": "{{job}} {{instance}} {{node}}",
           "refId": "A",
           "datasource": {
             "type": "prometheus",
@@ -668,7 +668,7 @@
       "targets": [
         {
           "expr": "process_resident_memory_bytes{job=~\"ticket-service|notification-service\"}",
-          "legendFormat": "{{job}} {{instance}}",
+          "legendFormat": "{{job}} {{instance}} {{node}}",
           "refId": "A",
           "datasource": {
             "type": "prometheus",
@@ -713,7 +713,7 @@
       "targets": [
         {
           "expr": "nodejs_eventloop_lag_p99_seconds{job=~\"ticket-service|notification-service\"}",
-          "legendFormat": "{{job}} {{instance}}",
+          "legendFormat": "{{job}} {{instance}} {{node}}",
           "refId": "A",
           "datasource": {
             "type": "prometheus",

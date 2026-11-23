@@ -4,16 +4,28 @@ variable "regiao" {
   default     = "us-east-1"
 }
 
+variable "zonas" {
+  description = "Duas zonas de disponibilidade: um servidor de aplicação em cada"
+  type        = list(string)
+  default     = ["us-east-1a", "us-east-1b"]
+}
+
 variable "repositorio" {
-  description = "Repositório público do GitHub que o servidor clona (usuario/repositorio)"
+  description = "Repositório público do GitHub que os servidores clonam (usuario/repositorio)"
   type        = string
   default     = "jlvjunior/HelpDesk"
 }
 
-variable "tipo_instancia" {
-  description = "Tamanho da máquina. O Learner Lab aceita até 'large'; a pilha completa (11 containers) precisa de ~6 GB"
+variable "tipo_instancia_app" {
+  description = "Tamanho dos dois servidores de aplicação (o Learner Lab aceita até 'large')"
   type        = string
-  default     = "t3.large"
+  default     = "t3.medium"
+}
+
+variable "tipo_instancia_dados" {
+  description = "Tamanho do servidor de dados e observabilidade"
+  type        = string
+  default     = "t3.medium"
 }
 
 variable "chave_ssh" {
