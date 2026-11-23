@@ -150,7 +150,8 @@ docker-compose.yml
 | Prometheus (todos os alvos "UP"), dashboard do Grafana e logs no Loki | Validados — ver [docs/evidencias](docs/evidencias/) |
 | Login, perfis, filtros, conversas, ações em lote e reabertura | Testados em navegador com PostgreSQL real; validação no Docker Compose pela checklist de [docs/evidencias](docs/evidencias/README.md) |
 | `terraform apply` e deploy no Kubernetes (kind) | Código entregue, **ainda não executado** |
-| Deploy na AWS (Terraform `infra/aws` + GitHub Actions) | Código entregue; execução no AWS Academy **a registrar** |
+| Deploy na AWS (Terraform `infra/aws`) | Executado em 23/11/2026 no AWS Academy: EC2 com Elastic IP, 11 contêineres no ar, aplicação e Grafana acessíveis pelo IP público |
+| Deploy contínuo (GitHub Actions `deploy-aws.yml`) | Testes e build a cada push; o deploy na EC2 roda depois de cadastrar os segredos `AWS_EC2_HOST` e `AWS_EC2_SSH_KEY` |
 
 ---
 

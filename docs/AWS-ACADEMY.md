@@ -63,7 +63,7 @@ git push
 6. Espere de **5 a 10 minutos**: o servidor está instalando o Docker e construindo as imagens. Para acompanhar (opcional):
 
    ```bash
-   ssh -i ~/.ssh/labsuser.pem -o StrictHostKeyChecking=accept-new ec2-user@<ip_publico> 'sudo tail -f /var/log/helpdesk-inicializacao.log'
+   ssh -i ~/.ssh/labsuser.pem -o StrictHostKeyChecking=no ec2-user@<ip_publico> 'sudo tail -f /var/log/helpdesk-inicializacao.log'
    ```
 
    Quando aparecer **HELPDESK PRONTO**, aperte Ctrl+C. Se o arquivo `~/.ssh/labsuser.pem` não existir no terminal, pule este passo e só espere os 10 minutos.

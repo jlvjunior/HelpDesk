@@ -18,6 +18,7 @@ O trabalho foi desenvolvido individualmente. Por isso, Joaquim Luiz Vitória Jun
 | Banco de dados (modelagem e migrações) | A/R | I |
 | Dockerfiles e Docker Compose | A/R | I |
 | IaC: Terraform e manifestos Kubernetes | A/R | I |
+| Implantação na nuvem (AWS Academy) e CI/CD (GitHub Actions) | A/R | I |
 | Monitoramento e observabilidade (Prometheus, Loki, Grafana, alertas) | A/R | I |
 | Testes e geração de carga | A/R | I |
 | Evidências (logs e prints de dashboard) | A/R | I |

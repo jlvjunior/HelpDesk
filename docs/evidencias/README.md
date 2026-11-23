@@ -1,5 +1,19 @@
 # Evidências de funcionamento
 
+## Arquivos
+
+| Item da atividade | Arquivo | O que mostra |
+|---|---|---|
+| 4 · Logs e eventos | [logs/ticket-service.log](logs/ticket-service.log) | Logs em JSON das duas réplicas do ticket-service: chamados abertos, status alterados e eventos publicados |
+| 4 · Logs e eventos | [logs/notification-service.log](logs/notification-service.log) | Logs das duas réplicas do notification-service: eventos consumidos e notificações enviadas |
+| 4 · Logs e eventos | [logs/rastreio-de-um-chamado.log](logs/rastreio-de-um-chamado.log) | Um chamado seguido pelo id nos dois serviços: aberto → evento publicado → notificação, em réplicas diferentes |
+| 5 · Dashboard | [dashboards/grafana-visao-geral.png](dashboards/grafana-visao-geral.png) | Dashboard "HelpDesk Cloud - Visão geral": réplicas, chamados, notificações, fila, DLQ, requisições e latência |
+| 5 · Dashboard | [dashboards/grafana-visao-geral-logs.png](dashboards/grafana-visao-geral-logs.png) | Mesmo dashboard com o painel de logs do Loki |
+| 5 · Monitoramento | [dashboards/prometheus-alvos-up.png](dashboards/prometheus-alvos-up.png) | Prometheus com os 6 alvos "UP": duas réplicas de cada microsserviço, RabbitMQ e o próprio Prometheus |
+
+Coleta feita em 09/11/2026 no Docker Compose, com 100 chamados gerados pelo `scripts/gerar-carga.sh`. A mesma pilha roda na AWS desde 23/11/2026 (ver [docs/AWS-ACADEMY.md](../AWS-ACADEMY.md)).
+
+
 Esta pasta contém os registros **reais** da aplicação em execução (itens 4 e 5 da atividade), coletados com o ambiente Docker Compose no ar. O roteiro abaixo descreve como eles foram gerados e permite reproduzi-los.
 
 ## Roteiro de coleta (Docker Compose)
@@ -56,9 +70,10 @@ Situação em 09/11/2026 (primeira versão) e 17/11/2026 (versão com perfis). S
 - [x] Um chamado aberto gera uma notificação no painel em poucos segundos
 - [x] Em http://localhost:9090/targets todos os alvos estão "UP"
 - [x] O dashboard do Grafana mostra dados nos painéis, inclusive o de logs (o painel de erros 5xx fica sem dados enquanto não há erros)
-- [ ] Login com as três contas de demonstração mostra a tela de cada perfil
+- [x] Login com as três contas de demonstração mostra a tela de cada perfil
 - [ ] Mensagem do usuário aparece como "nova" no botão "Conversas" do operador
 - [ ] Operador não consegue fechar; o administrador fecha e devolve à fila
 - [ ] Pedido de reabertura do usuário aparece na fila e gera notificação
+- [x] `terraform apply` em `infra/aws` cria o servidor na AWS (23/11/2026) e a aplicação responde pelo IP público
 - [ ] `./scripts/k8s-up.sh` conclui sem erros
 - [ ] `kubectl -n helpdesk get pods` mostra todos os pods "Running" e distribuídos entre os nós
