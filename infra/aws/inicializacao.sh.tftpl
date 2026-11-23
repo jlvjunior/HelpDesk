@@ -1,0 +1,46 @@
+#!/bin/bash
+# Primeiro boot do servidor: instala o Docker, clona o repositório e sobe a pilha.
+# Log completo em /var/log/helpdesk-inicializacao.log
+exec > /var/log/helpdesk-inicializacao.log 2>&1
+set -euo pipefail
+echo ">> Instalando swap, Docker e Git"
+
+# Memória extra (swap) para o build das imagens não faltar memória.
+if [ ! -f /swapfile ]; then
+  fallocate -l 2G /swapfile
+  chmod 600 /swapfile
+  mkswap /swapfile
+  swapon /swapfile
+  echo '/swapfile none swap sw 0 0' >> /etc/fstab
+fi
+
+dnf install -y docker git
+systemctl enable --now docker
+usermod -aG docker ec2-user
+
+# Plugins do Docker: Compose e Buildx (o Amazon Linux não traz por padrão).
+mkdir -p /usr/local/lib/docker/cli-plugins
+curl -fsSL https://github.com/docker/compose/releases/download/v2.32.4/docker-compose-linux-x86_64 \
+  -o /usr/local/lib/docker/cli-plugins/docker-compose
+curl -fsSL https://github.com/docker/buildx/releases/download/v0.19.3/buildx-v0.19.3.linux-amd64 \
+  -o /usr/local/lib/docker/cli-plugins/docker-buildx
+chmod +x /usr/local/lib/docker/cli-plugins/*
+
+echo ">> Clonando o repositório"
+# Código da aplicação, direto do GitHub.
+git clone https://github.com/${repositorio}.git /opt/helpdesk
+
+# Configuração do ambiente de nuvem (fora do Git).
+cat > /opt/helpdesk/.env <<CONFIG
+COMPOSE_FILE=docker-compose.yml:docker-compose.aws.yml
+JWT_SECRET=${jwt_secret}
+GRAFANA_SENHA=${grafana_senha}
+CONFIG
+chmod 600 /opt/helpdesk/.env
+chown -R ec2-user:ec2-user /opt/helpdesk
+
+echo ">> Subindo a pilha com Docker Compose (build das imagens)"
+cd /opt/helpdesk
+docker compose up -d --build
+docker compose ps
+echo "HELPDESK PRONTO"

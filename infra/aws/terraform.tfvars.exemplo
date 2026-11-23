@@ -1,0 +1,3 @@
+# Copie para terraform.tfvars (que NÃO vai para o GitHub) e ajuste.
+grafana_senha = "troque-por-uma-senha-forte"
+# ip_admin    = "1.2.3.4/32"   # opcional: seu IP, para abrir Prometheus e RabbitMQ

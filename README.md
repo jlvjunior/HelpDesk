@@ -26,6 +26,18 @@ O endereço é o mesmo para todos (http://localhost:8080); a tela e as permissõ
 
 Qualquer pessoa pode criar uma conta de usuário na tela de entrada; contas de operador e de administrador são criadas pelo administrador. As três contas acima são criadas na primeira inicialização e servem só para demonstração: em um ambiente real, as senhas devem ser trocadas pelas variáveis `ADMIN_PASSWORD`, `OPERATOR_PASSWORD` e `USER_PASSWORD`, e o segredo dos tokens por `JWT_SECRET`.
 
+## Funcionalidades
+
+- **Login com três perfis** no mesmo endereço; a tela e as permissões mudam conforme a conta.
+- **Chamados** com prioridade, busca e filtros por texto, usuário, prioridade, status e período.
+- **Atendimento online:** conversa dentro de cada chamado, com o botão "Conversas" no topo avisando quando há mensagem nova.
+- **Ciclo de vida controlado:** o operador resolve e reabre; só o administrador fecha e, depois de fechado, só ele altera o chamado.
+- **Ações em lote:** selecionar chamados um a um ou todos os do filtro e resolver ou fechar com uma única justificativa.
+- **Pedido de reabertura** pelo solicitante, com justificativa, aceito ou recusado pelo atendimento.
+- **Notificações assíncronas** ao solicitante, via RabbitMQ, em cada etapa.
+
+Capturas de cada tela: [docs/telas](docs/telas/).
+
 ## Arquitetura em resumo
 
 | Camada | Componente | Tecnologia |
@@ -33,8 +45,8 @@ Qualquer pessoa pode criar uma conta de usuário na tela de entrada; contas de o
 | Frontend | SPA + gateway de API | React (Vite) servido por nginx |
 | Backend | `ticket-service` (chamados, conversa, contas e login) | Node.js 22 + Express |
 | Backend | `notification-service` (notificações) | Node.js 22 + Express, consumidor de fila |
-| Mensageria | Eventos `ticket.created` e `ticket.status_changed` | RabbitMQ (exchange topic, fila durável, DLQ) |
-| Banco de dados | Chamados e notificações | PostgreSQL 16 |
+| Mensageria | Eventos de chamado (`ticket.created`, `ticket.status_changed`, `ticket.message_added`, `ticket.reopen_*`) | RabbitMQ (exchange topic, fila durável, DLQ) |
+| Banco de dados | Contas, chamados, conversas e notificações | PostgreSQL 16 |
 | Observabilidade | Métricas, logs, dashboards e alertas | Prometheus, Loki, Promtail, Grafana |
 | Orquestração | Local, sem custo | Docker Compose ou Kubernetes (kind) |
 | IaC | Cluster e stack de observabilidade | Terraform |
@@ -48,7 +60,7 @@ O desenho completo, os fluxos e o detalhamento de alta disponibilidade, monitora
 | 0 | RACI | [docs/RACI.md](docs/RACI.md) |
 | 1 | Desenho e detalhamento da arquitetura | [docs/arquitetura/README.md](docs/arquitetura/README.md) |
 | 2 | Código da aplicação | [app/](app/) |
-| 3 | Infraestrutura como código | [infra/terraform/](infra/terraform/), [infra/k8s/](infra/k8s/), [docker-compose.yml](docker-compose.yml) |
+| 3 | Infraestrutura como código | [infra/aws/](infra/aws/) (nuvem), [infra/terraform/](infra/terraform/), [infra/k8s/](infra/k8s/), [docker-compose.yml](docker-compose.yml) |
 | 4 | Logs e eventos da aplicação | [docs/evidencias/logs/](docs/evidencias/) |
 | 5 | Print do dashboard | [docs/evidencias/dashboards/](docs/evidencias/) |
 | 6 | Apresentação | [docs/apresentacao/](docs/apresentacao/) |
@@ -57,11 +69,11 @@ O desenho completo, os fluxos e o detalhamento de alta disponibilidade, monitora
 
 ### Opção A — Docker Compose (mais simples)
 
-Pré-requisito: Docker com o plugin Compose. No Windows, basta o Docker Desktop com o backend WSL 2; os comandos `docker compose` rodam no PowerShell e os scripts `.sh` rodam com `wsl ./scripts/<nome>.sh`.
+Pré-requisito: Docker com o plugin Compose. No Windows, basta o Docker Desktop com o backend WSL 2; os comandos `docker compose` rodam no PowerShell e os scripts `.sh` rodam com `wsl -d Ubuntu bash ./scripts/<nome>.sh` (é preciso ter o Ubuntu instalado no WSL).
 
 ```bash
 docker compose up -d --build
-./scripts/gerar-carga.sh 100        # gera tráfego para os dashboards
+./scripts/gerar-carga.sh 100        # gera chamados, conversas e mudanças de status com as contas de demonstração
 ```
 
 | Serviço | URL | Acesso |
@@ -87,6 +99,18 @@ kubectl -n helpdesk get pods,hpa -o wide
 ```
 
 As URLs são as mesmas da opção A (não rode as duas opções ao mesmo tempo, pois usam as mesmas portas).
+
+### Opção C — Nuvem AWS (AWS Academy) com deploy automático pelo GitHub
+
+O Terraform de [infra/aws](infra/aws/) cria um servidor EC2 com IP fixo que sobe a pilha inteira, e o workflow [deploy-aws.yml](.github/workflows/deploy-aws.yml) atualiza o servidor a cada push na `main`, depois de rodar os testes. Passo a passo completo: [docs/AWS-ACADEMY.md](docs/AWS-ACADEMY.md).
+
+```bash
+cd infra/aws
+terraform init
+terraform apply -var="grafana_senha=<sua-senha>"
+```
+
+O endereço aparece no fim do `apply` (`endereco_aplicacao`). O servidor só fica ligado enquanto o Learner Lab estiver ativo (**Start Lab**).
 
 ### Testes automatizados
 
@@ -124,8 +148,9 @@ docker-compose.yml
 | Ambiente Docker Compose completo (11 containers, duas réplicas de cada microsserviço) | Executado em 09/11/2026, no Windows com Docker Desktop |
 | Fluxo de ponta a ponta pelo RabbitMQ (chamado → evento → notificação) | Validado |
 | Prometheus (todos os alvos "UP"), dashboard do Grafana e logs no Loki | Validados — ver [docs/evidencias](docs/evidencias/) |
-| Login, perfis, filtros, conversas e fechamento em lote | Testados em navegador com PostgreSQL real; fluxo completo no Docker Compose (nginx e RabbitMQ) **a validar** |
+| Login, perfis, filtros, conversas, ações em lote e reabertura | Testados em navegador com PostgreSQL real; validação no Docker Compose pela checklist de [docs/evidencias](docs/evidencias/README.md) |
 | `terraform apply` e deploy no Kubernetes (kind) | Código entregue, **ainda não executado** |
+| Deploy na AWS (Terraform `infra/aws` + GitHub Actions) | Código entregue; execução no AWS Academy **a registrar** |
 
 ---
 

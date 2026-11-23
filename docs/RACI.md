@@ -13,6 +13,8 @@ O trabalho foi desenvolvido individualmente. Por isso, Joaquim Luiz Vitória Jun
 | Frontend (React + nginx) | A/R | I |
 | Backend: `ticket-service` | A/R | I |
 | Backend: `notification-service` e mensageria | A/R | I |
+| Autenticação, perfis de acesso e regras de status | A/R | I |
+| Atendimento online, filtros, ações em lote e reabertura | A/R | I |
 | Banco de dados (modelagem e migrações) | A/R | I |
 | Dockerfiles e Docker Compose | A/R | I |
 | IaC: Terraform e manifestos Kubernetes | A/R | I |

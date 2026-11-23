@@ -8,3 +8,4 @@ dist/
 *.tfstate.*
 *-config
 kubeconfig
+terraform.tfvars

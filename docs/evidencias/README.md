@@ -4,32 +4,36 @@ Esta pasta contém os registros **reais** da aplicação em execução (itens 4 
 
 ## Roteiro de coleta (Docker Compose)
 
-```bash
+```powershell
 docker compose up -d --build
-docker compose ps                         # todos os serviços devem estar "running"/"healthy"
-./scripts/gerar-carga.sh 200
+docker compose ps                                    # todos os serviços devem estar "running"/"healthy"
+wsl -d Ubuntu bash ./scripts/gerar-carga.sh 200
 ```
+
+O script de carga entra com as contas de demonstração: o usuário abre os chamados, o operador responde e muda o status, e o administrador fecha uma parte. Assim os logs e o dashboard mostram também login, conversas e fechamentos.
 
 ### Item 4 — Logs e eventos → `logs/`
 
 ```powershell
-docker compose logs --no-color ticket-service | Out-File -Encoding utf8 docs\evidencias\logs\ticket-service.log
-docker compose logs --no-color notification-service | Out-File -Encoding utf8 docs\evidencias\logs\notification-service.log
+cmd /c "docker compose logs --no-color ticket-service > docs\evidencias\logs\ticket-service.log"
+cmd /c "docker compose logs --no-color notification-service > docs\evidencias\logs\notification-service.log"
 ```
 
-Para evidenciar o rastreamento de um chamado de ponta a ponta, abrir um chamado pela tela, copiar o `id` (o primeiro em http://localhost:8080/api/tickets) e executar:
+O `cmd /c` grava a saída do Docker sem conversão, evitando acentos quebrados e linhas cortadas, que acontecem com o `Out-File` do PowerShell.
+
+Para evidenciar o rastreamento de um chamado de ponta a ponta: entrar como usuário, abrir um chamado e mandar uma mensagem; entrar como operador, responder e resolver. O `id` do chamado aparece nos logs na linha `chamado aberto` (campo `ticketId`). Depois executar, trocando o id:
 
 ```powershell
-docker compose logs --no-color ticket-service notification-service | Select-String "<id do chamado>" | Out-File -Encoding utf8 docs\evidencias\logs\rastreio-de-um-chamado.log
+cmd /c "docker compose logs --no-color ticket-service notification-service | findstr <id do chamado> > docs\evidencias\logs\rastreio-de-um-chamado.log"
 ```
 
-(No Linux ou no macOS, usar `>` no lugar de `| Out-File ...` e `grep` no lugar de `Select-String`.)
+(No Linux ou no macOS: `docker compose logs --no-color ticket-service notification-service | grep <id> > ...`.)
 
-O arquivo deve mostrar, em sequência: `chamado aberto` → `evento publicado` → `notificação enviada (simulada)`.
+O arquivo deve mostrar, em sequência: `chamado aberto` → `evento publicado` → `notificação enviada (simulada)` → `mensagem registrada no chamado` → `status do chamado alterado` e as notificações correspondentes.
 
 ### Item 5 — Dashboard → `dashboards/`
 
-1. Abrir o Grafana em http://localhost:3000 (admin / admin). O dashboard "HelpDesk Cloud - Visão geral" abre como página inicial.
+1. Abrir o Grafana em http://localhost:3000 (admin / admin; se a porta foi trocada no `.env`, http://localhost:3001). O dashboard "HelpDesk Cloud - Visão geral" abre como página inicial.
 2. Com a carga rodando, tirar um print da tela inteira e salvar como `dashboards/visao-geral.png`.
 3. Opcional: em **Explore → Loki**, consultar `{service="notification-service"} |= "notificação enviada"` e salvar como `dashboards/logs-loki.png`.
 4. Opcional: print da fila no RabbitMQ (http://localhost:15672 → Queues) como `dashboards/rabbitmq-filas.png`.
@@ -45,12 +49,16 @@ O arquivo deve mostrar, em sequência: `chamado aberto` → `evento publicado` �
 
 ## Checklist de validação do ambiente
 
-Situação em 09/11/2026. Se algo falhar, o primeiro passo é `docker compose logs <serviço>`.
+Situação em 09/11/2026 (primeira versão) e 17/11/2026 (versão com perfis). Se algo falhar, o primeiro passo é `docker compose logs <serviço>`.
 
 - [x] `docker compose up -d --build` sobe todos os serviços
 - [x] A tela em http://localhost:8080 abre e mostra "API online"
 - [x] Um chamado aberto gera uma notificação no painel em poucos segundos
 - [x] Em http://localhost:9090/targets todos os alvos estão "UP"
 - [x] O dashboard do Grafana mostra dados nos painéis, inclusive o de logs (o painel de erros 5xx fica sem dados enquanto não há erros)
+- [ ] Login com as três contas de demonstração mostra a tela de cada perfil
+- [ ] Mensagem do usuário aparece como "nova" no botão "Conversas" do operador
+- [ ] Operador não consegue fechar; o administrador fecha e devolve à fila
+- [ ] Pedido de reabertura do usuário aparece na fila e gera notificação
 - [ ] `./scripts/k8s-up.sh` conclui sem erros
 - [ ] `kubectl -n helpdesk get pods` mostra todos os pods "Running" e distribuídos entre os nós

@@ -8,12 +8,15 @@
 
 **Requisitos funcionais**
 
-- Entrar com e-mail e senha, com três perfis de acesso: usuário, operador e administrador.
+- Entrar com e-mail e senha, com três perfis de acesso: usuário, operador e administrador; qualquer pessoa pode criar uma conta de usuário.
 - Abrir chamado com título, descrição e prioridade (baixa, média, alta); o solicitante é a conta autenticada.
-- Listar chamados e alterar o status (aberto, em andamento, resolvido, fechado).
-- Trocar mensagens de texto dentro do chamado, entre solicitante e atendente (atendimento online).
-- Notificar o solicitante quando o chamado é aberto, a cada mudança de status e a cada resposta do atendente.
-- Consultar o histórico de notificações enviadas.
+- Acompanhar os chamados com busca e filtros por texto, usuário, prioridade, status e período.
+- Atender os chamados conforme o perfil: o operador coloca em andamento, resolve e reabre; só o administrador fecha e, depois de fechado, só ele altera o chamado.
+- Resolver ou fechar vários chamados de uma vez, com uma única justificativa.
+- Pedir a reabertura de um chamado resolvido ou fechado, com justificativa, sem abrir outro chamado.
+- Trocar mensagens de texto dentro do chamado, entre solicitante e atendente (atendimento online), com aviso de mensagem nova.
+- Notificar o solicitante quando o chamado é aberto, muda de status, recebe resposta do atendente ou tem o pedido de reabertura analisado.
+- Gerir contas e perfis (administrador).
 
 **Requisitos não funcionais**
 
@@ -30,13 +33,13 @@ flowchart LR
 
     subgraph APP["Aplicação"]
         FE["frontend<br/>React + nginx (gateway)<br/>2 réplicas"]
-        TS["ticket-service<br/>Node.js + Express<br/>2 a 6 réplicas (HPA)"]
-        NS["notification-service<br/>Node.js + Express<br/>2 a 6 réplicas (HPA)"]
+        TS["ticket-service<br/>Node.js + Express<br/>login, chamados, conversa<br/>2 a 6 réplicas (HPA)"]
+        NS["notification-service<br/>Node.js + Express<br/>valida o token JWT<br/>2 a 6 réplicas (HPA)"]
         MQ[["RabbitMQ<br/>exchange helpdesk.events<br/>fila notifications + DLQ"]]
-        DB[("PostgreSQL 16<br/>tickets · notifications")]
+        DB[("PostgreSQL 16<br/>users · tickets · ticket_messages<br/>notifications")]
     end
 
-    FE -->|/api/tickets| TS
+    FE -->|/api/auth · /api/users · /api/tickets| TS
     FE -->|/api/notifications| NS
     TS -->|SQL| DB
     NS -->|SQL| DB
@@ -63,9 +66,9 @@ flowchart LR
 
 | Componente | Responsabilidade | Detalhes técnicos |
 |---|---|---|
-| **frontend** | Interface web e ponto único de entrada | SPA em React compilada com Vite. O nginx serve os arquivos estáticos e encaminha `/api/tickets` e `/api/notifications` para os microsserviços, gerando um `X-Request-Id` por requisição. |
+| **frontend** | Interface web e ponto único de entrada | SPA em React compilada com Vite. O nginx serve os arquivos estáticos e encaminha `/api/auth`, `/api/users` e `/api/tickets` ao ticket-service e `/api/notifications` ao notification-service, gerando um `X-Request-Id` por requisição. |
 | **ticket-service** | Contas e login, CRUD de chamados, conversa e publicação de eventos | API REST em Express. Grava no PostgreSQL e publica `ticket.created`, `ticket.status_changed`, `ticket.message_added`, `ticket.reopen_requested` e `ticket.reopen_dismissed` no RabbitMQ com mensagens persistentes e *publisher confirms*. |
-| **notification-service** | Consumo de eventos e registro das notificações | Consome a fila `notifications` com *ack* manual. O envio do e-mail é simulado (registrado em log e no banco). Expõe `GET /notifications`. |
+| **notification-service** | Consumo de eventos e registro das notificações | Consome a fila `notifications` com *ack* manual e transforma cada evento em uma notificação ao solicitante. O envio do e-mail é simulado (registrado em log e no banco). Expõe `GET /notifications`, que exige login e filtra por perfil. |
 | **RabbitMQ** | Mensageria | Exchange `helpdesk.events` (topic), fila durável `notifications` ligada a `ticket.*` e *dead-letter queue* `notifications.dlq`. |
 | **PostgreSQL** | Persistência | Tabelas `users`, `tickets` e `ticket_messages` (dono: ticket-service) e `notifications` (dono: notification-service). Cada serviço cria e acessa apenas as próprias tabelas. |
 
@@ -89,13 +92,15 @@ flowchart LR
 | GET | `/api/notifications` | notification-service | Lista notificações (`?ticketId=` opcional) |
 | GET | `/healthz`, `/readyz`, `/metrics` | ambos | Liveness, readiness e métricas (uso interno) |
 
-### Autenticação e perfis de acesso
+## 4. Funcionalidades e regras de negócio
+
+### 4.1 Autenticação e perfis de acesso
 
 O login é feito no `ticket-service`, que guarda as contas na tabela `users` (senha com hash scrypt e salt aleatório) e emite um token JWT assinado (HS256, validade de 8 horas) com o id, o nome, o e-mail e o perfil. O frontend envia o token no cabeçalho `Authorization` e os dois microsserviços o validam com o mesmo segredo (`JWT_SECRET`), sem consulta ao banco nem sessão em memória, o que mantém os serviços sem estado.
 
 | Ação | Usuário | Operador | Administrador |
 |---|:-:|:-:|:-:|
-| Abrir chamado | Sim | Sim | Sim |
+| Abrir chamado | Sim | Só pela API | Só pela API |
 | Ver chamados | Só os próprios | Todos | Todos |
 | Colocar em andamento ou resolver (um a um ou em lote) | Não | Sim | Sim |
 | Reabrir chamado resolvido | Não | Sim | Sim |
@@ -111,13 +116,15 @@ As permissões são verificadas no backend em cada requisição; a tela apenas e
 
 Limitações conhecidas: o perfil vai dentro do token, então uma mudança de perfil só vale no próximo login; não há bloqueio por tentativas de login nem troca de senha pela tela. A evolução natural é extrair as contas para um serviço de identidade próprio (ou um provedor como Keycloak ou Cognito).
 
-### Telas e navegação
+### 4.2 Telas e navegação
 
 A interface é organizada em abas, que variam com o perfil: **Meus chamados**, **Novo chamado** e **Notificações** para o usuário; **Atendimento** e **Notificações** para o operador; e, para o administrador, também **Usuários**. O botão **Conversas**, sempre visível no topo, indica quantas conversas têm mensagens novas.
 
+As capturas de cada tela estão em [docs/telas](../telas/).
+
 A lista de chamados tem busca por texto, por usuário (e-mail do solicitante), prioridade, status e intervalo de datas, além de paginação. Os filtros são aplicados no navegador sobre os 1.000 chamados mais recentes devolvidos pela API. No atendimento, os chamados podem ser marcados um a um ou todos de uma vez (os do filtro atual), e resolvidos ou fechados em lote com uma única justificativa. A justificativa fica gravada no chamado (`close_reason`) e é incluída na notificação enviada a cada solicitante.
 
-### Ciclo de vida do chamado
+### 4.3 Ciclo de vida do chamado
 
 ```mermaid
 stateDiagram-v2
@@ -133,13 +140,13 @@ stateDiagram-v2
 
 O operador atende, resolve e reabre chamados resolvidos; **fechar é exclusivo do administrador e, depois de fechado, só ele pode alterar o chamado ou devolvê-lo à fila**. Se o problema voltar, o solicitante não precisa abrir outro chamado: ele pede a reabertura do mesmo, com uma justificativa. O pedido aparece destacado na fila do atendimento, que pode aceitar (o chamado volta para "Aberto") ou recusar — se o chamado estiver fechado, essa decisão cabe ao administrador; nos dois casos o solicitante é notificado. Só pode haver um pedido pendente por chamado.
 
-### Atendimento online
+### 4.4 Atendimento online
 
 Cada chamado tem uma conversa. O aviso de mensagem nova usa o resumo da conversa que a API devolve junto de cada chamado (quantidade e autor da última mensagem); o que já foi lido fica registrado no navegador de cada conta. A tela consulta as mensagens a cada 2 segundos (*polling*), o que dispensa WebSocket e mantém os serviços sem estado. Quando o atendente responde, o evento `ticket.message_added` gera uma notificação para o solicitante; mensagens do próprio solicitante são consumidas e ignoradas. Chamados fechados não aceitam novas mensagens. O papel na conversa vem do perfil da conta: usuário fala como solicitante; operador e administrador, como atendente.
 
-## 4. Fluxos
+## 5. Fluxos
 
-### 4.1 Abertura de chamado (síncrono + assíncrono)
+### 5.1 Abertura de chamado (síncrono + assíncrono)
 
 ```mermaid
 sequenceDiagram
@@ -150,8 +157,12 @@ sequenceDiagram
     participant MQ as RabbitMQ
     participant NS as notification-service
 
+    U->>FE: POST /api/auth/login
+    FE->>TS: valida e-mail e senha
+    TS-->>FE: token JWT (perfil, 8 h)
     U->>FE: POST /api/tickets
-    FE->>TS: POST /tickets (X-Request-Id)
+    FE->>TS: POST /tickets (Authorization + X-Request-Id)
+    TS->>TS: valida o token e o perfil
     TS->>DB: INSERT tickets
     TS->>MQ: publish ticket.created (persistente, com confirm)
     TS-->>FE: 201 Created
@@ -165,23 +176,51 @@ sequenceDiagram
     FE-->>U: notificação aparece no painel
 ```
 
-### 4.2 Tratamento de falhas na mensageria
+### 5.2 Pedido de reabertura
+
+```mermaid
+sequenceDiagram
+    actor U as Usuário
+    participant TS as ticket-service
+    participant MQ as RabbitMQ
+    participant NS as notification-service
+    actor A as Operador ou administrador
+
+    U->>TS: POST /tickets/:id/reopen-request (justificativa)
+    TS->>TS: confere dono, status resolvido/fechado e pedido pendente
+    TS->>MQ: ticket.reopen_requested
+    MQ->>NS: notificação "pedido recebido"
+    A->>TS: vê o pedido destacado na fila
+    alt aceita
+        A->>TS: PATCH status = aberto
+        TS->>MQ: ticket.status_changed
+    else recusa
+        A->>TS: DELETE /tickets/:id/reopen-request
+        TS->>MQ: ticket.reopen_dismissed
+    end
+    MQ->>NS: notificação ao solicitante
+```
+
+Se o chamado estiver fechado, só o administrador pode aceitar ou recusar o pedido.
+
+### 5.3 Tratamento de falhas na mensageria
 
 - **notification-service fora do ar:** as mensagens ficam na fila durável e são processadas quando ele volta. A abertura de chamados não é afetada.
 - **Falha ao processar (ex.: banco indisponível):** a mensagem recebe *nack* e volta para a fila uma vez. Na segunda falha vai para `notifications.dlq`, onde fica disponível para análise e reprocessamento, e um alerta é disparado.
 - **Entrega duplicada:** o `event_id` é chave única na tabela `notifications`, então a mesma mensagem processada duas vezes gera uma única notificação (consumidor idempotente).
 - **RabbitMQ fora do ar:** o chamado é gravado normalmente, a falha de publicação é registrada em log e na métrica `events_published_total{result="erro"}`. Os dois serviços se reconectam sozinhos a cada 3 segundos.
 
-## 5. Ambientes
+## 6. Ambientes
 
-| | Docker Compose | Kubernetes (kind) |
-|---|---|---|
-| Finalidade | Desenvolvimento e demo rápida | Demonstração de HA e escalabilidade |
-| Provisionamento | `docker compose up` | Terraform (`infra/terraform`) + Kustomize (`infra/k8s`) |
-| Réplicas dos serviços | 2 fixas | 2 a 6, com HPA |
-| Nós | 1 (a máquina local) | 1 control-plane + 2 workers |
-| Descoberta de serviço | DNS do Docker | Services do Kubernetes |
-| Observabilidade | Prometheus, Loki, Promtail e Grafana em containers | kube-prometheus-stack e loki-stack via Helm |
+| | Docker Compose (local) | Kubernetes (kind) | Nuvem AWS (AWS Academy) |
+|---|---|---|---|
+| Finalidade | Desenvolvimento e demo rápida | Demonstração de HA e escalabilidade | Aplicação online, com endereço público |
+| Provisionamento | `docker compose up` | Terraform (`infra/terraform`) + Kustomize (`infra/k8s`) | Terraform (`infra/aws`): EC2, grupo de segurança e Elastic IP |
+| Atualização | Manual | Manual (`kubectl apply -k`) | Automática pelo GitHub Actions a cada push na `main` |
+| Réplicas dos serviços | 2 fixas | 2 a 6, com HPA | 2 fixas |
+| Nós | 1 (a máquina local) | 1 control-plane + 2 workers | 1 servidor EC2 t3.large |
+| Descoberta de serviço | DNS do Docker | Services do Kubernetes | DNS do Docker |
+| Observabilidade | Prometheus, Loki, Promtail e Grafana em containers | kube-prometheus-stack e loki-stack via Helm | Igual ao local, com Grafana protegido por senha |
 
 ### Infraestrutura como código
 
@@ -194,7 +233,15 @@ O Terraform (`infra/terraform`) cria:
 
 Os manifestos da aplicação (`infra/k8s`) são aplicados com `kubectl apply -k` e incluem Deployments, Services, HPAs, PodDisruptionBudgets, ServiceMonitors, regras de alerta e o dashboard do Grafana.
 
-## 6. Alta disponibilidade e escalabilidade
+Na nuvem, o Terraform de `infra/aws` cria, no AWS Academy Learner Lab:
+
+1. um **grupo de segurança** que libera só a aplicação (80), o Grafana (3000) e o SSH por chave (22); Prometheus e RabbitMQ ficam fechados, ou abertos só para o IP do administrador;
+2. um servidor **EC2 t3.large** com Amazon Linux 2023, usando o perfil `LabInstanceProfile` do laboratório;
+3. um **Elastic IP**, para o endereço não mudar quando o laboratório desliga e religa o servidor.
+
+No primeiro boot, o script de inicialização instala o Docker, clona este repositório e sobe a pilha com `docker-compose.yml` + `docker-compose.aws.yml`. O segredo dos tokens de login é gerado pelo Terraform e fica num `.env` fora do Git. Depois disso, o workflow `.github/workflows/deploy-aws.yml` testa os microsserviços, constrói as imagens e atualiza o servidor por SSH a cada push na `main`, conferindo no fim se a aplicação responde. Passo a passo: [docs/AWS-ACADEMY.md](../AWS-ACADEMY.md).
+
+## 7. Alta disponibilidade e escalabilidade
 
 | Mecanismo | Como foi implementado | O que garante |
 |---|---|---|
@@ -225,13 +272,14 @@ PostgreSQL e RabbitMQ rodam com **uma instância cada**, pois o objetivo do ambi
 | Secret em manifesto | Secrets Manager + External Secrets | Segredos fora do Git |
 | Publicação após o commit | Padrão *Transactional Outbox* | Garantia de publicação de todo evento |
 | HPA por CPU | KEDA escalando o notification-service pelo tamanho da fila | Escala pelo indicador real de demanda |
+| Contas e tokens no ticket-service | Amazon Cognito (ou Keycloak) como provedor de identidade | Senhas, MFA e bloqueio por tentativas fora da aplicação |
 | Envio de e-mail simulado | Amazon SES, ou uma função serverless (Lambda) acionada pela fila | Envio real e cobrança por uso |
 
-## 7. Monitoramento e observabilidade
+## 8. Monitoramento e observabilidade
 
 A solução cobre os pilares de **métricas** e **logs**, com correlação entre eles pelo identificador da requisição e do evento.
 
-### 7.1 Métricas (Prometheus)
+### 8.1 Métricas (Prometheus)
 
 Cada microsserviço expõe `/metrics` com a biblioteca `prom-client`. O Prometheus descobre todas as réplicas automaticamente (DNS no Compose, `ServiceMonitor` no Kubernetes) e coleta a cada 10 segundos.
 
@@ -253,9 +301,9 @@ Cada microsserviço expõe `/metrics` com a biblioteca `prom-client`. O Promethe
 
 Essas métricas seguem o método **RED** (Rate, Errors, Duration) para as APIs e acrescentam indicadores de negócio e de mensageria.
 
-### 7.2 Logs (Loki + Promtail)
+### 8.2 Logs (Loki + Promtail)
 
-- Os serviços escrevem **logs estruturados em JSON** no `stdout` (biblioteca `pino`), com `service`, `level`, `time`, e os campos de contexto `req.id`, `ticketId`, `eventId` e `eventType`.
+- Os serviços escrevem **logs estruturados em JSON** no `stdout` (biblioteca `pino`), com `service`, `level`, `time`, e os campos de contexto `req.id`, `userId`, `ticketId`, `eventId` e `eventType`. Senhas e tokens nunca são registrados.
 - O **Promtail** coleta o `stdout` de todos os containers e envia ao **Loki**, com os labels `service` (ou `app`, no Kubernetes) e `level`.
 - O nginx gera um `X-Request-Id` e o repassa ao backend, e cada evento carrega o próprio `id`. Assim é possível seguir um chamado de ponta a ponta com uma consulta como:
 
@@ -263,9 +311,9 @@ Essas métricas seguem o método **RED** (Rate, Errors, Duration) para as APIs e
 {service=~"ticket-service|notification-service"} |= "<id do chamado>"
 ```
 
-Eventos de aplicação registrados: `chamado aberto`, `status do chamado alterado`, `evento publicado`, `notificação enviada (simulada)`, `evento duplicado ignorado`, falhas de publicação ou de consumo e reconexões.
+Eventos de aplicação registrados: `login realizado`, `login recusado`, `conta criada`, `perfil alterado`, `chamado aberto`, `status do chamado alterado`, `status alterado em lote`, `mensagem registrada no chamado`, `reabertura solicitada`, `pedido de reabertura recusado`, `evento publicado`, `notificação enviada (simulada)`, `evento duplicado ignorado`, falhas de publicação ou de consumo e reconexões.
 
-### 7.3 Dashboard (Grafana)
+### 8.3 Dashboard (Grafana)
 
 O dashboard **"HelpDesk Cloud - Visão geral"** é provisionado automaticamente a partir do repositório, e reúne:
 
@@ -276,7 +324,7 @@ O dashboard **"HelpDesk Cloud - Visão geral"** é provisionado automaticamente 
 - CPU, memória e atraso do *event loop* por réplica;
 - painel de logs em tempo real vindo do Loki.
 
-### 7.4 Alertas
+### 8.4 Alertas
 
 Definidos em `infra/observability/alerts.yml` (Compose) e `infra/k8s/alerts.yaml` (Kubernetes):
 
@@ -290,14 +338,14 @@ Definidos em `infra/observability/alerts.yml` (Compose) e `infra/k8s/alerts.yaml
 
 No Kubernetes os alertas chegam ao Alertmanager, instalado pelo kube-prometheus-stack; o roteamento para e-mail ou Slack é a evolução natural.
 
-## 8. Requisitos da atividade
+## 9. Requisitos da atividade
 
 | Requisito | Atendimento |
 |---|---|
 | Aplicação de três camadas | Frontend React, backend Node.js e PostgreSQL |
-| Resolve um problema real | Gestão de chamados de suporte com retorno ao solicitante |
+| Resolve um problema real | Gestão de chamados de suporte com perfis de acesso, atendimento online e retorno ao solicitante |
 | Microsserviços em Docker ou Kubernetes | Dois microsserviços e um frontend, em Docker Compose e em Kubernetes |
 | Serverless e/ou mensageria | Mensageria com RabbitMQ entre os dois microsserviços |
 | IaC | Terraform, manifestos Kubernetes e Docker Compose |
-| Alta disponibilidade | Seção 6 |
-| Monitoramento e observabilidade | Seção 7 |
+| Alta disponibilidade | Seção 7 |
+| Monitoramento e observabilidade | Seção 8 |

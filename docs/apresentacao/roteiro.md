@@ -2,38 +2,44 @@
 
 **Apresentador:** Joaquim Luiz Vitória Junior · **Disciplina:** Arquitetura de Computação em Nuvem · **Professor:** Erik Rosa Filippini
 
-Os slides finais (PPT ou PDF) ficam nesta pasta: 12 slides e uma demo de 5 minutos.
+Os slides finais (PPT ou PDF) ficam nesta pasta: 15 slides e uma demo de 5 minutos.
 
 | # | Slide | Tempo | Conteúdo |
 |---|---|---|---|
-| 1 | Capa | 0:30 | Nome do projeto, disciplina, professor e autor |
-| 2 | Problema e cenário | 1:00 | Pedidos de suporte perdidos, falta de retorno ao solicitante |
-| 3 | Solução e funcionalidades | 1:00 | Abrir, acompanhar, notificar; print da tela |
-| 4 | Desenho da arquitetura | 2:00 | Diagrama da seção 2 do README de arquitetura |
-| 5 | Stack utilizada | 1:00 | Tabela de tecnologias por camada |
-| 6 | Fluxo com mensageria | 2:00 | Diagrama de sequência; por que assíncrono; DLQ e idempotência |
-| 7 | Infraestrutura como código | 1:30 | Terraform (kind, Helm), Kustomize, Compose |
-| 8 | Alta disponibilidade | 2:00 | Réplicas, probes, distribuição entre nós, PDB, rolling update |
-| 9 | Escalabilidade | 1:00 | Serviços sem estado, HPA, consumidores concorrentes |
-| 10 | Monitoramento e observabilidade | 2:00 | Métricas (RED + negócio), logs estruturados, alertas; print do dashboard |
-| 11 | **Demo** | 5:00 | Ver roteiro abaixo |
-| 12 | Limitações, evolução e RACI | 1:00 | Pontos únicos de falha locais, caminho para nuvem gerenciada |
+| 1 | Capa | 0:20 | Nome do projeto, disciplina, professor e autor |
+| 2 | O problema | 0:40 | Pedidos de suporte perdidos, falta de retorno ao solicitante |
+| 3 | A solução | 1:00 | Funcionalidades: chamados, atendimento online, ações em lote, reabertura, notificações |
+| 4 | Perfis de acesso | 1:00 | Usuário, operador e administrador: o que cada um faz |
+| 5 | Telas da aplicação | 1:00 | Fila do operador e central de conversas (prints) |
+| 6 | Ciclo de vida do chamado | 1:00 | Regras de status por perfil e pedido de reabertura |
+| 7 | Desenho da arquitetura | 1:30 | Diagrama da seção 2 do README de arquitetura |
+| 8 | Stack utilizada | 0:40 | Tabela de tecnologias por camada |
+| 9 | Fluxo com mensageria | 1:30 | Síncrono e assíncrono; DLQ e idempotência |
+| 10 | Infraestrutura como código | 1:00 | Terraform (kind, Helm), Kustomize, Compose |
+| 11 | Alta disponibilidade | 1:30 | Réplicas, probes, distribuição entre nós, PDB, rolling update |
+| 12 | Escalabilidade | 0:40 | Serviços sem estado (inclusive o login com JWT), HPA, consumidores concorrentes |
+| 13 | Monitoramento e observabilidade | 1:30 | Métricas (RED + negócio), logs estruturados, alertas; print do dashboard |
+| 14 | **Demo** | 5:00 | Ver roteiro abaixo |
+| 15 | Limitações e evolução | 0:40 | Pontos únicos de falha locais, caminho para nuvem gerenciada |
 
 ## Roteiro da demo (ao vivo ou gravada)
 
-Deixar o ambiente no ar e a carga rodando **antes** de começar (`./scripts/gerar-carga.sh 500`).
+Antes de começar: ambiente no ar, carga gerada (`wsl -d Ubuntu bash ./scripts/gerar-carga.sh 200`) e três janelas abertas em http://localhost:8080 — uma normal como **usuário**, uma anônima como **operador** e outra (outro navegador ou perfil) como **administrador**.
 
-1. **Aplicação (1 min).** Abrir um chamado na tela. Mostrar que ele aparece na lista e que, em seguida, a notificação surge no painel ao lado.
-2. **Mensageria (1 min).** No painel do RabbitMQ, mostrar a exchange `helpdesk.events` e a fila `notifications` com as taxas de publicação e consumo.
-3. **Dashboard (1 min).** No Grafana, mostrar requisições por segundo, latência, chamados abertos e o balanceamento entre as réplicas.
-4. **Logs (1 min).** No painel de logs, filtrar pelo id do chamado recém-criado e mostrar a sequência nos dois serviços.
-5. **Resiliência (1 min).** Derrubar uma réplica do ticket-service (`docker kill ...` ou `kubectl delete pod ...`), mostrar que a tela continua funcionando e que o painel de réplicas cai e se recupera.
+1. **Usuário (1 min).** Abrir um chamado e mandar uma mensagem na conversa.
+2. **Operador (1 min).** Mostrar o botão "Conversas" com "1 nova", responder e ver a resposta chegar sozinha na janela do usuário. Filtrar a fila por prioridade alta e status aberto, selecionar todos e resolver em lote com uma justificativa. Mostrar que a opção "Fechado" está bloqueada para ele.
+3. **Usuário e administrador (1 min).** O usuário pede a reabertura de um chamado resolvido; o administrador filtra "Só pedidos de reabertura" e devolve o chamado à fila. Mostrar a notificação recebida pelo usuário.
+4. **Observabilidade (1 min).** No Grafana, requisições, latência, eventos publicados e consumidos e o balanceamento entre réplicas; no painel de logs, seguir o chamado pelo id.
+5. **Resiliência (1 min).** Derrubar uma réplica do ticket-service (`docker kill helpdesk-ticket-service-1`) e mostrar que a tela continua funcionando, inclusive o login, e que o painel de réplicas cai e se recupera.
 
 **Plano B:** gravar a demo com antecedência. Se o ambiente falhar na hora, exibir o vídeo.
 
 ## Perguntas prováveis
 
 - **Por que RabbitMQ e não Kafka?** O caso de uso é uma fila de trabalho com confirmação por mensagem e DLQ, que é o modelo nativo do RabbitMQ. Kafka faria sentido para alto volume, retenção e reprocessamento de histórico.
+- **Como o login não quebra a escalabilidade?** O token JWT carrega o perfil e é validado por qualquer réplica com o mesmo segredo, sem sessão em memória nem consulta ao banco.
+- **A permissão é só na tela?** Não. Cada rota confere o perfil no backend; a tela apenas esconde o que o perfil não pode usar.
+- **Por que o chat usa polling e não WebSocket?** Polling a cada 2 segundos mantém os serviços sem estado e funciona atrás de qualquer balanceador. WebSocket seria a evolução para volume maior.
 - **O que acontece se o banco cair?** O `/readyz` falha, as réplicas saem do balanceamento e a API responde erro até a volta. Em produção, um banco gerenciado Multi-AZ faria o failover.
 - **Por que um banco só para os dois serviços?** Para manter o ambiente local leve. Cada serviço acessa apenas as próprias tabelas, o que permite separar em duas instâncias sem mudar o código, apenas a `DATABASE_URL`.
 - **Onde entraria serverless?** No envio real do e-mail: uma função acionada pela fila, cobrada por execução.

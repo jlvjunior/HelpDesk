@@ -1,0 +1,13 @@
+# Ajustes para rodar na AWS (EC2). Usado junto com o docker-compose.yml:
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.aws.yml   (já gravado no .env pelo Terraform)
+# - Frontend também na porta 80 (endereço sem ":8080").
+# - Grafana com senha própria (variável GRAFANA_SENHA do .env), e não admin/admin.
+services:
+  frontend:
+    ports:
+      - "80:8080"
+
+  grafana:
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_SENHA:?defina GRAFANA_SENHA no arquivo .env}
+      GF_USERS_ALLOW_SIGN_UP: "false"
