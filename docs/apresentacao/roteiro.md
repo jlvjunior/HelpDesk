@@ -32,7 +32,7 @@ Antes de começar: **Start Lab** no AWS Academy uns 10 minutos antes, carga gera
 2. **Operador (1 min).** Mostrar o botão "Conversas" com "1 nova", responder e ver a resposta chegar sozinha na janela do usuário. Filtrar a fila por prioridade alta e status aberto, selecionar todos e resolver em lote com uma justificativa. Mostrar que a opção "Fechado" está bloqueada para ele.
 3. **Usuário e administrador (1 min).** O usuário pede a reabertura de um chamado resolvido; o administrador filtra "Só pedidos de reabertura" e devolve o chamado à fila. Mostrar a notificação recebida pelo usuário.
 4. **Observabilidade (1 min).** No Grafana, requisições, latência, eventos publicados e consumidos e o balanceamento entre réplicas; no painel de logs, seguir o chamado pelo id.
-5. **Alta disponibilidade (1 min).** Derrubar o servidor app-a inteiro (no terminal do laboratório: `hd-a 'cd /opt/helpdesk/deploy/aws/app && docker compose stop'`) e mostrar que a aplicação continua funcionando pelo mesmo endereço, inclusive o login, e que no Grafana as réplicas caem de 4 para 2. Depois religar com `docker compose start`.
+5. **Alta disponibilidade (1 min).** Derrubar uma réplica do ticket-service (no terminal do laboratório: `hd-a 'docker kill helpdesk-ticket-service-1'`) e mostrar que a aplicação continua funcionando pelo endereço do load balancer, inclusive o login, e que no Grafana as réplicas caem de 2 para 1 e voltam sozinhas. Explicar que a versão com dois servidores está pronta no Terraform, mas o laboratório da turma só mantém uma instância ligada (CloudTrail).
 
 **Plano B:** o ambiente local no notebook (`docker compose up -d`, em http://localhost:8080) ou a demo gravada com antecedência.
 

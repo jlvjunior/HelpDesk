@@ -57,7 +57,7 @@ services:
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
     ports:
-      - "9090:9090"
+      - "9091:9090" # 9091 no host: não conflita com o Prometheus central quando tudo roda num servidor só
     restart: unless-stopped
 
   # Envia os logs dos contêineres deste servidor para o Loki do servidor de dados.

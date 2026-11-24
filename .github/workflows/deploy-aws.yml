@@ -75,11 +75,12 @@ jobs:
           CHAVE: ${{ secrets.AWS_EC2_SSH_KEY }}
         run: |
           faltando=""
-          for nome in DADOS APP_A APP_B ALB CHAVE; do
+          # AWS_HOST_APP_B é opcional: sem ele, a infraestrutura tem um servidor só (servidores_app = 1).
+          for nome in DADOS APP_A ALB CHAVE; do
             [ -z "${!nome}" ] && faltando="$faltando $nome"
           done
           if [ -n "$faltando" ]; then
-            echo "::error::Faltam segredos:$faltando. Cadastre AWS_HOST_DADOS, AWS_HOST_APP_A, AWS_HOST_APP_B, AWS_ALB_DNS e AWS_EC2_SSH_KEY (veja docs/AWS-ACADEMY.md)."
+            echo "::error::Faltam segredos:$faltando. Cadastre AWS_HOST_DADOS, AWS_HOST_APP_A, AWS_ALB_DNS e AWS_EC2_SSH_KEY (e AWS_HOST_APP_B se houver dois servidores) (veja docs/AWS-ACADEMY.md)."
             exit 1
           fi
 
@@ -97,7 +98,7 @@ jobs:
             StrictHostKeyChecking accept-new
             ConnectTimeout 20
           CFG
-          for host in "$DADOS" "$APP_A" "$APP_B"; do
+          for host in "$DADOS" "$APP_A" ${APP_B:+"$APP_B"}; do
             if ! ssh "$host" true; then
               echo "::error::Não consegui conectar a $host. O laboratório está ligado? Clique em Start Lab no AWS Academy e rode o workflow de novo."
               exit 1
@@ -119,6 +120,7 @@ jobs:
         run: ssh "$APP_A" bash -s < .github/scripts/atualizar-app.sh
 
       - name: Atualizar app-b (app-a segue atendendo)
+        if: env.APP_B != ''
         run: ssh "$APP_B" bash -s < .github/scripts/atualizar-app.sh
 
       - name: Verificar a aplicação pelo load balancer
@@ -132,7 +134,7 @@ jobs:
                 echo "### 🚀 HelpDesk Cloud atualizado na AWS (deploy gradual)"
                 echo "- Aplicação (load balancer): http://$ALB"
                 echo "- Grafana: http://$DADOS:3000"
-                echo "- Servidores atualizados um de cada vez: app-a, depois app-b"
+                echo "- Servidores de aplicação atualizados um de cada vez: app-a${APP_B:+, depois app-b}"
                 echo "- Commit: \`${GITHUB_SHA::7}\`"
               } >> "$GITHUB_STEP_SUMMARY"
               echo "✅ Aplicação respondendo em http://$ALB"

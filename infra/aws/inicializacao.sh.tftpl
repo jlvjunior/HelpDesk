@@ -1,6 +1,6 @@
 #!/bin/bash
 # Primeiro boot de cada servidor: instala o Docker, clona o repositório e sobe a parte que
-# cabe a este servidor (papel "${papel}": dados ou app).
+# cabe a este servidor (papel "${papel}": dados, app ou tudo = os dois num servidor só).
 # Log completo em /var/log/helpdesk-inicializacao.log
 exec > /var/log/helpdesk-inicializacao.log 2>&1
 set -euo pipefail
@@ -29,18 +29,21 @@ echo ">> Clonando o repositório"
 git clone https://github.com/${repositorio}.git /opt/helpdesk
 chown -R ec2-user:ec2-user /opt/helpdesk
 
-%{ if papel == "dados" ~}
+%{ if papel != "app" ~}
 # Endereços dos servidores de aplicação para a federação do Prometheus.
 mkdir -p /etc/helpdesk
 cat > /etc/helpdesk/apps.json <<'APPS'
 [
 %{ for i, ip in ips_apps ~}
-  { "targets": ["${ip}:9090"], "labels": { "servidor": "app-${i == 0 ? "a" : "b"}" } }${i < length(ips_apps) - 1 ? "," : ""}
+  { "targets": ["${ip}:9091"], "labels": { "servidor": "app-${i == 0 ? "a" : "b"}" } }${i < length(ips_apps) - 1 ? "," : ""}
 %{ endfor ~}
 ]
 APPS
 
 cat > /opt/helpdesk/deploy/aws/dados/.env <<CONFIG
+%{ if papel == "dados" ~}
+COMPOSE_PROFILES=coleta
+%{ endif ~}
 DB_SENHA=${db_senha}
 MQ_SENHA=${mq_senha}
 GRAFANA_SENHA=${grafana_senha}
@@ -51,7 +54,9 @@ chown ec2-user:ec2-user /opt/helpdesk/deploy/aws/dados/.env
 echo ">> Subindo banco, fila e observabilidade"
 cd /opt/helpdesk/deploy/aws/dados
 docker compose up -d
-%{ else ~}
+docker compose ps
+%{ endif ~}
+%{ if papel != "dados" ~}
 cat > /opt/helpdesk/deploy/aws/app/.env <<CONFIG
 NODE_NAME=${nome}
 DADOS_HOST=${ip_dados}
@@ -78,6 +83,6 @@ sleep ${espera}
 
 echo ">> Subindo a aplicação"
 docker compose up -d
-%{ endif ~}
 docker compose ps
+%{ endif ~}
 echo "HELPDESK PRONTO"

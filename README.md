@@ -112,6 +112,8 @@ terraform apply -var="grafana_senha=<sua-senha>"
 
 O endereço aparece no fim do `apply` (`endereco_aplicacao`). Os servidores só ficam ligados enquanto o Learner Lab estiver ativo (**Start Lab**).
 
+**Limite do laboratório:** o AWS Academy desta turma só mantém uma instância EC2 ligada por vez (os servidores extras são terminados pelo robô do laboratório, conferido no CloudTrail). Por isso o padrão é `servidores_app = 1`, com um servidor que faz tudo atrás do load balancer; `-var="servidores_app=2"` cria os dois servidores de aplicação em zonas diferentes e o servidor de dados.
+
 ### Testes automatizados
 
 ```bash
@@ -150,7 +152,7 @@ docker-compose.yml
 | Prometheus (todos os alvos "UP"), dashboard do Grafana e logs no Loki | Validados — ver [docs/evidencias](docs/evidencias/) |
 | Login, perfis, filtros, conversas, ações em lote e reabertura | Testados em navegador com PostgreSQL real; validação no Docker Compose pela checklist de [docs/evidencias](docs/evidencias/README.md) |
 | `terraform apply` e deploy no Kubernetes (kind) | Código entregue, **ainda não executado** |
-| Deploy na AWS (Terraform `infra/aws`) | Servidor único executado em 23/11/2026 no AWS Academy; versão com ALB e dois servidores de aplicação **a registrar** |
+| Deploy na AWS (Terraform `infra/aws`) | Servidor único executado em 23/11/2026. Versão com 3 servidores **bloqueada pelo laboratório** (uma instância por vez); versão com ALB e um servidor **a registrar** |
 | Deploy contínuo (GitHub Actions `deploy-aws.yml`) | Testes e build a cada push; deploy gradual (dados → app-a → app-b) depois de cadastrar os segredos da AWS |
 
 ---

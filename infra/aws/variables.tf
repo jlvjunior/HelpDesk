@@ -16,6 +16,23 @@ variable "repositorio" {
   default     = "jlvjunior/HelpDesk"
 }
 
+variable "servidores_app" {
+  description = "Quantos servidores de aplicação atrás do load balancer. 1 = um servidor faz tudo (limite do AWS Academy desta turma: uma instância por vez). 2 = alta disponibilidade entre zonas, com servidor de dados separado"
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = contains([1, 2], var.servidores_app)
+    error_message = "Use 1 (um servidor) ou 2 (alta disponibilidade entre zonas)."
+  }
+}
+
+variable "tipo_instancia_unico" {
+  description = "Tamanho do servidor quando servidores_app = 1 (ele roda aplicação, dados e observabilidade)"
+  type        = string
+  default     = "t3.large"
+}
+
 variable "tipo_instancia_app" {
   description = "Tamanho dos dois servidores de aplicação (o Learner Lab aceita até 'large')"
   type        = string

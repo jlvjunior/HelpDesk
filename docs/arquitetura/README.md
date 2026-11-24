@@ -215,10 +215,10 @@ Se o chamado estiver fechado, só o administrador pode aceitar ou recusar o pedi
 | | Docker Compose (local) | Kubernetes (kind) | Nuvem AWS (AWS Academy) |
 |---|---|---|---|
 | Finalidade | Desenvolvimento e demo rápida | Demonstração de HA e escalabilidade | Aplicação online, com HA entre servidores |
-| Provisionamento | `docker compose up` | Terraform (`infra/terraform`) + Kustomize (`infra/k8s`) | Terraform (`infra/aws`): ALB, 3 EC2, grupos de segurança e Elastic IPs |
+| Provisionamento | `docker compose up` | Terraform (`infra/terraform`) + Kustomize (`infra/k8s`) | Terraform (`infra/aws`): ALB, 1 EC2 (limite do laboratório) ou 3 EC2, grupos de segurança e Elastic IPs |
 | Atualização | Manual | Manual (`kubectl apply -k`) | GitHub Actions a cada push na `main`, um servidor de cada vez |
-| Réplicas dos serviços | 2 fixas | 2 a 6, com HPA | 4 (2 em cada servidor de aplicação) |
-| Nós | 1 (a máquina local) | 1 control-plane + 2 workers | 2 servidores de aplicação (zonas a e b) + 1 de dados |
+| Réplicas dos serviços | 2 fixas | 2 a 6, com HPA | 2 por servidor de aplicação (2 ou 4 no total) |
+| Nós | 1 (a máquina local) | 1 control-plane + 2 workers | 1 servidor (laboratório) ou 2 de aplicação em zonas diferentes + 1 de dados |
 | Descoberta de serviço | DNS do Docker | Services do Kubernetes | ALB entre servidores; DNS do Docker dentro de cada um |
 | Observabilidade | Prometheus, Loki, Promtail e Grafana em containers | kube-prometheus-stack e loki-stack via Helm | Prometheus por servidor + central com federação; Promtail em cada servidor enviando ao Loki central |
 
@@ -233,7 +233,7 @@ O Terraform (`infra/terraform`) cria:
 
 Os manifestos da aplicação (`infra/k8s`) são aplicados com `kubectl apply -k` e incluem Deployments, Services, HPAs, PodDisruptionBudgets, ServiceMonitors, regras de alerta e o dashboard do Grafana.
 
-Na nuvem, o Terraform de `infra/aws` cria, no AWS Academy Learner Lab, uma topologia com alta disponibilidade na camada de aplicação:
+Na nuvem, o Terraform de `infra/aws` descreve uma topologia com alta disponibilidade na camada de aplicação (`servidores_app = 2`):
 
 ```mermaid
 flowchart TB
@@ -252,6 +252,8 @@ flowchart TB
 3. **um servidor de dados e observabilidade** com PostgreSQL, RabbitMQ, Loki, o Prometheus central e o Grafana;
 4. **grupos de segurança** em camadas: só o ALB fala com a porta 8080 dos servidores de aplicação; só os servidores de aplicação falam com banco, fila e Loki; o Grafana é público, protegido por senha;
 5. **Elastic IPs** para o acesso por SSH do GitHub Actions não mudar quando o laboratório religa os servidores.
+
+**Limite do AWS Academy:** o laboratório desta turma só mantém uma instância EC2 ligada por vez. Na tentativa com três servidores, o CloudTrail mostrou o robô do laboratório (`sys3695465`) executando `TerminateInstances` em cada servidor extra 8 segundos após a criação. Por isso o padrão é `servidores_app = 1`: o mesmo load balancer aponta para um único servidor t3.large que roda as duas partes (`deploy/aws/dados` e `deploy/aws/app`). A alta disponibilidade, nesse caso, fica entre as réplicas de cada microsserviço; a redundância entre servidores e zonas está pronta no código para uma conta sem essa restrição.
 
 Os IPs privados são fixos, então cada servidor já nasce sabendo onde estão os outros. O script de inicialização instala o Docker, clona este repositório e sobe a parte que cabe ao servidor (`deploy/aws/dados` ou `deploy/aws/app`). As senhas do banco e da fila e o segredo dos tokens são gerados pelo Terraform e gravados em arquivos `.env` fora do Git.
 
@@ -273,7 +275,7 @@ O workflow `.github/workflows/deploy-aws.yml` testa os microsserviços, constró
 | **Proteção em manutenção** | `PodDisruptionBudget` com `minAvailable: 1` | Drenar um nó nunca remove todas as réplicas |
 | **Desacoplamento** | Mensageria entre chamados e notificações | Falha ou lentidão nas notificações não afeta a abertura de chamados |
 | **Resiliência de mensagens** | Fila durável, mensagens persistentes, *publisher confirms*, *ack* manual, DLQ, idempotência | Nenhuma notificação é perdida nem duplicada em caso de falha |
-| **Load balancer entre zonas (AWS)** | Application Load Balancer com dois servidores de aplicação em zonas diferentes e health check a cada 10 s | A queda de um servidor ou de uma zona inteira não tira a aplicação do ar |
+| **Load balancer entre zonas (AWS)** | Application Load Balancer com health check a cada 10 s; código pronto para dois servidores em zonas diferentes (`servidores_app = 2`), executado com um servidor por limite do laboratório | Com dois servidores, a queda de um servidor ou de uma zona não tira a aplicação do ar |
 | **Deploy gradual (AWS)** | GitHub Actions atualiza um servidor de aplicação de cada vez e espera ele responder | Atualização sem desligar a aplicação |
 | **Reconexão automática** | Retentativas de conexão com o banco e com o broker | Os serviços se recuperam sozinhos da volta de uma dependência |
 

@@ -10,6 +10,10 @@
 #
 # O ALB verifica a saúde de cada servidor a cada 10 s e para de mandar tráfego para quem
 # falhar duas vezes seguidas: a queda de um servidor (ou de uma zona) não tira a aplicação do ar.
+#
+# servidores_app = 2 cria exatamente o desenho acima. servidores_app = 1 (padrão) cria um único
+# servidor que faz tudo, atrás do mesmo ALB: o AWS Academy desta turma só mantém uma instância
+# EC2 ligada por vez (as demais são terminadas pelo robô do laboratório, conferido no CloudTrail).
 
 data "aws_vpc" "padrao" {
   default = true
@@ -39,9 +43,11 @@ data "aws_ami" "amazon_linux" {
 }
 
 locals {
+  unico = var.servidores_app == 1
   # IPs privados fixos: cada servidor já nasce sabendo onde estão os outros.
-  ip_dados = cidrhost(data.aws_subnet.zona[0].cidr_block, 200)
-  ip_apps  = [for s in data.aws_subnet.zona : cidrhost(s.cidr_block, 201)]
+  ip_apps = slice([for s in data.aws_subnet.zona : cidrhost(s.cidr_block, 201)], 0, var.servidores_app)
+  # Com um servidor só, ele mesmo é o "servidor de dados".
+  ip_dados = local.unico ? local.ip_apps[0] : cidrhost(data.aws_subnet.zona[0].cidr_block, 200)
   nomes    = ["app-a", "app-b"]
 }
 
@@ -162,8 +168,8 @@ resource "aws_security_group" "dados" {
 resource "aws_security_group_rule" "app_metricas" {
   type                     = "ingress"
   description              = "Federacao do Prometheus central"
-  from_port                = 9090
-  to_port                  = 9090
+  from_port                = 9091
+  to_port                  = 9091
   protocol                 = "tcp"
   security_group_id        = aws_security_group.app.id
   source_security_group_id = aws_security_group.dados.id
@@ -172,6 +178,7 @@ resource "aws_security_group_rule" "app_metricas" {
 # ---------- Servidores ----------
 
 resource "aws_instance" "dados" {
+  count                  = local.unico ? 0 : 1
   ami                    = data.aws_ami.amazon_linux.id
   instance_type          = var.tipo_instancia_dados
   key_name               = var.chave_ssh
@@ -206,22 +213,23 @@ resource "aws_instance" "dados" {
 }
 
 resource "aws_instance" "app" {
-  count                  = 2
-  ami                    = data.aws_ami.amazon_linux.id
-  instance_type          = var.tipo_instancia_app
-  key_name               = var.chave_ssh
-  iam_instance_profile   = var.perfil_instancia
-  subnet_id              = data.aws_subnet.zona[count.index].id
-  private_ip             = local.ip_apps[count.index]
-  vpc_security_group_ids = [aws_security_group.app.id]
+  count                = var.servidores_app
+  ami                  = data.aws_ami.amazon_linux.id
+  instance_type        = local.unico ? var.tipo_instancia_unico : var.tipo_instancia_app
+  key_name             = var.chave_ssh
+  iam_instance_profile = var.perfil_instancia
+  subnet_id            = data.aws_subnet.zona[count.index].id
+  private_ip           = local.ip_apps[count.index]
+  # Servidor único: recebe também as regras do servidor de dados (Grafana público).
+  vpc_security_group_ids = local.unico ? [aws_security_group.app.id, aws_security_group.dados.id] : [aws_security_group.app.id]
 
   root_block_device {
-    volume_size = 20
+    volume_size = local.unico ? 30 : 20
     volume_type = "gp3"
   }
 
   user_data = templatefile("${path.module}/inicializacao.sh.tftpl", {
-    papel         = "app"
+    papel         = local.unico ? "tudo" : "app"
     nome          = local.nomes[count.index]
     repositorio   = var.repositorio
     ip_dados      = local.ip_dados
@@ -230,7 +238,7 @@ resource "aws_instance" "app" {
     jwt_secret    = random_password.jwt.result
     db_senha      = random_password.banco.result
     mq_senha      = random_password.fila.result
-    grafana_senha = ""
+    grafana_senha = local.unico ? var.grafana_senha : ""
   })
   user_data_replace_on_change = true
 
@@ -242,13 +250,14 @@ resource "aws_instance" "app" {
 
 # IPs públicos fixos para o SSH do GitHub Actions: não mudam quando o laboratório religa os servidores.
 resource "aws_eip" "dados" {
-  instance = aws_instance.dados.id
+  count    = local.unico ? 0 : 1
+  instance = aws_instance.dados[0].id
   domain   = "vpc"
   tags     = { Name = "helpdesk-dados" }
 }
 
 resource "aws_eip" "app" {
-  count    = 2
+  count    = var.servidores_app
   instance = aws_instance.app[count.index].id
   domain   = "vpc"
   tags     = { Name = "helpdesk-${local.nomes[count.index]}" }
@@ -283,7 +292,7 @@ resource "aws_lb_target_group" "app" {
 }
 
 resource "aws_lb_target_group_attachment" "app" {
-  count            = 2
+  count            = var.servidores_app
   target_group_arn = aws_lb_target_group.app.arn
   target_id        = aws_instance.app[count.index].id
   port             = 8080
